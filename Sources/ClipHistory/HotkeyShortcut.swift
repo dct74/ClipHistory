@@ -4,9 +4,28 @@ struct HotkeyShortcut: Codable, Equatable {
     var keyCode: UInt16
     var modifiers: UInt   // NSEvent.ModifierFlags.rawValue
 
+    /// Opens the popup at the text cursor.
     static let `default` = HotkeyShortcut(
         keyCode: 9,       // V
         modifiers: NSEvent.ModifierFlags([.command, .shift]).rawValue
+    )
+
+    /// Pastes the most recent clip — keeps ⌘V working as a plain paste.
+    static let pasteLatestDefault = HotkeyShortcut(
+        keyCode: 9,       // V
+        modifiers: NSEvent.ModifierFlags([.command]).rawValue
+    )
+
+    /// Steps through the history oldest → newest, one clip per press.
+    static let pasteNextDefault = HotkeyShortcut(
+        keyCode: 9,       // V
+        modifiers: NSEvent.ModifierFlags([.command, .control]).rawValue
+    )
+
+    /// Pastes every clip in the current scope in one run.
+    static let pasteAllDefault = HotkeyShortcut(
+        keyCode: 9,       // V
+        modifiers: NSEvent.ModifierFlags([.command, .control, .option]).rawValue
     )
 
     var modifierFlags: NSEvent.ModifierFlags {

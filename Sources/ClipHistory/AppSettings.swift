@@ -9,7 +9,23 @@ final class AppSettings {
     // MARK: - Stored properties
 
     var hotkey: HotkeyShortcut = .default {
-        didSet { save(); onHotkeyChanged?(hotkey) }
+        didSet { save(); onHotkeysChanged?() }
+    }
+
+    /// Pastes the most recent clip. Defaults to ⌘V, so ClipHistory owns plain
+    /// paste system-wide.
+    var pasteLatestHotkey: HotkeyShortcut = .pasteLatestDefault {
+        didSet { save(); onHotkeysChanged?() }
+    }
+
+    /// Walks the history oldest → newest, one clip per press.
+    var pasteNextHotkey: HotkeyShortcut = .pasteNextDefault {
+        didSet { save(); onHotkeysChanged?() }
+    }
+
+    /// Pastes every clip in the current scope in order.
+    var pasteAllHotkey: HotkeyShortcut = .pasteAllDefault {
+        didSet { save(); onHotkeysChanged?() }
     }
 
     var maxItems: Int = 50 {
@@ -29,7 +45,7 @@ final class AppSettings {
     }
 
     /// When true, reopening the popup keeps the previous selection/scroll
-    /// position instead of jumping back to the newest clip at the top.
+    /// position instead of jumping back to the start of the list.
     var rememberScrollPosition: Bool = false {
         didSet { save() }
     }
@@ -41,17 +57,33 @@ final class AppSettings {
 
     // MARK: - Callbacks (set by AppDelegate)
 
-    var onHotkeyChanged:   ((HotkeyShortcut) -> Void)?
+    /// Shortcuts the system refused to register (conflict with another app, or
+    /// the same combo bound twice). Shown as a warning in Settings.
+    var unavailableHotkeys: Set<String> = []
+
+    var onHotkeysChanged:  (() -> Void)?
     var onMaxItemsChanged: ((Int) -> Void)?
 
     // MARK: - Init
 
     init() { load() }
 
+    /// Bump whenever shortcut defaults change meaning.
+    private static let defaultsVersion = 2
+
+    /// Suppresses persistence while `load()` assigns the stored values — each
+    /// assignment fires `didSet`, which would otherwise write the not-yet-loaded
+    /// defaults back over the user's saved shortcuts.
+    private var isLoading = true
+
     // MARK: - Persistence
 
     private enum Keys {
+        static let version                = "settingsVersion"
         static let hotkey                 = "hotkey"
+        static let pasteLatestHotkey      = "pasteLatestHotkey"
+        static let pasteNextHotkey        = "pasteNextHotkey"
+        static let pasteAllHotkey         = "pasteAllHotkey"
         static let maxItems               = "maxItems"
         static let hideImages             = "hideImages"
         static let rememberScrollPosition = "rememberScrollPosition"
@@ -60,10 +92,20 @@ final class AppSettings {
 
     private func load() {
         let d = UserDefaults.standard
-        if let data = d.data(forKey: Keys.hotkey),
-           let saved = try? JSONDecoder().decode(HotkeyShortcut.self, from: data) {
-            hotkey = saved
+
+        // Bump when stored shortcuts change meaning. The paste keys were
+        // re-mapped (⌘V latest / ⌃⌘V cycle / ⌃⌥⌘V all), so anything saved under
+        // the old mapping is dropped and the new defaults apply.
+        if d.integer(forKey: Keys.version) < Self.defaultsVersion {
+            [Keys.pasteLatestHotkey, Keys.pasteNextHotkey, Keys.pasteAllHotkey]
+                .forEach { d.removeObject(forKey: $0) }
+            d.set(Self.defaultsVersion, forKey: Keys.version)
         }
+        hotkey = Self.decode(d.data(forKey: Keys.hotkey)) ?? .default
+        pasteLatestHotkey = Self.decode(d.data(forKey: Keys.pasteLatestHotkey)) ?? .pasteLatestDefault
+        pasteNextHotkey = Self.decode(d.data(forKey: Keys.pasteNextHotkey)) ?? .pasteNextDefault
+        pasteAllHotkey  = Self.decode(d.data(forKey: Keys.pasteAllHotkey))  ?? .pasteAllDefault
+
         let n = d.integer(forKey: Keys.maxItems)
         if n >= 5 { maxItems = n }
 
@@ -76,13 +118,26 @@ final class AppSettings {
         // Read ground-truth from the OS — don't call SMAppService again if it
         // already matches (guard in didSet prevents the redundant call).
         launchAtLogin = SMAppService.mainApp.status == .enabled
+        isLoading = false
+    }
+
+    private static func decode(_ data: Data?) -> HotkeyShortcut? {
+        guard let data else { return nil }
+        return try? JSONDecoder().decode(HotkeyShortcut.self, from: data)
+    }
+
+    private static func store(_ shortcut: HotkeyShortcut, key: String, into d: UserDefaults) {
+        guard let data = try? JSONEncoder().encode(shortcut) else { return }
+        d.set(data, forKey: key)
     }
 
     private func save() {
+        guard !isLoading else { return }
         let d = UserDefaults.standard
-        if let data = try? JSONEncoder().encode(hotkey) {
-            d.set(data, forKey: Keys.hotkey)
-        }
+        Self.store(hotkey,          key: Keys.hotkey,          into: d)
+        Self.store(pasteLatestHotkey, key: Keys.pasteLatestHotkey, into: d)
+        Self.store(pasteNextHotkey, key: Keys.pasteNextHotkey, into: d)
+        Self.store(pasteAllHotkey,  key: Keys.pasteAllHotkey,  into: d)
         d.set(maxItems,                 forKey: Keys.maxItems)
         d.set(hideImages,               forKey: Keys.hideImages)
         d.set(rememberScrollPosition,   forKey: Keys.rememberScrollPosition)
@@ -92,6 +147,8 @@ final class AppSettings {
     // MARK: - Launch at Login
 
     private func applyLaunchAtLogin() {
+        // Loading the stored value must not re-register the login item.
+        guard !isLoading else { return }
         do {
             if launchAtLogin {
                 try SMAppService.mainApp.register()
@@ -99,9 +156,13 @@ final class AppSettings {
                 try SMAppService.mainApp.unregister()
             }
         } catch {
-            // SMAppService throws if the state is already what we asked for,
-            // or if it needs user approval — both are non-fatal.
+            // Refused (needs user approval, or the bundle isn't eligible):
+            // fall back to what the OS actually reports instead of showing a
+            // toggle that is on while no login item exists.
             NSLog("ClipHistory: launch-at-login update: \(error.localizedDescription)")
+            isLoading = true
+            launchAtLogin = SMAppService.mainApp.status == .enabled
+            isLoading = false
         }
     }
 }

@@ -6,6 +6,8 @@ import SwiftUI
 final class HotkeyRecorderNSView: NSView {
     var hotkey: HotkeyShortcut { didSet { needsDisplay = true } }
     var onChanged: (HotkeyShortcut) -> Void
+    /// Rejects combinations that are already bound (returns false → beep).
+    var validate: ((HotkeyShortcut) -> Bool)?
 
     private var isRecording = false { didSet { needsDisplay = true } }
 
@@ -50,6 +52,10 @@ final class HotkeyRecorderNSView: NSView {
         guard mods.contains(.command) || mods.contains(.control) || mods.contains(.option) else { return }
 
         let newHotkey = HotkeyShortcut(keyCode: keyCode, modifiers: mods.rawValue)
+        if let validate, !validate(newHotkey) {
+            NSSound.beep()
+            return
+        }
         hotkey = newHotkey
         onChanged(newHotkey)
         window?.makeFirstResponder(nil)
@@ -74,7 +80,7 @@ final class HotkeyRecorderNSView: NSView {
         path.lineWidth = 1
         path.stroke()
 
-        let label = isRecording ? "Type shortcut…" : hotkey.displayString
+        let label = isRecording ? L10n.s("Type shortcut…", "请按下组合键…") : hotkey.displayString
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedSystemFont(ofSize: 12.5, weight: .semibold),
             .foregroundColor: isRecording ? NSColor.controlAccentColor : NSColor.labelColor,
@@ -90,13 +96,17 @@ final class HotkeyRecorderNSView: NSView {
 
 struct HotkeyRecorder: NSViewRepresentable {
     @Binding var hotkey: HotkeyShortcut
+    var validate: ((HotkeyShortcut) -> Bool)? = nil
 
     func makeNSView(context: Context) -> HotkeyRecorderNSView {
-        HotkeyRecorderNSView(hotkey: hotkey) { hotkey = $0 }
+        let view = HotkeyRecorderNSView(hotkey: hotkey) { hotkey = $0 }
+        view.validate = validate
+        return view
     }
 
     func updateNSView(_ view: HotkeyRecorderNSView, context: Context) {
         view.hotkey    = hotkey
+        view.validate  = validate
         view.onChanged = { hotkey = $0 }
     }
 }

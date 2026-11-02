@@ -7,17 +7,17 @@ struct PopupView: View {
     let updateChecker: UpdateChecker
     let onSelect:      (ClipItem) -> Void
     let onDismiss:     () -> Void
+    let onConfirm:     () -> Void
 
     // Single source of truth for filtering — same call the window controller
     // uses, so selection indices always agree between view and key handling.
-    // Reading state.searchText / settings.hideImages here (and store.items
-    // inside the store method) registers all three @Observable dependencies.
+    // Reading state.queryText / settings.hideImages here (and store.items inside
+    // the store method) registers all three @Observable dependencies.
     var filtered: [ClipItem] {
-        store.filtered(query: state.searchText, showImages: !settings.hideImages)
+        store.filtered(query: state.queryText, showImages: !settings.hideImages)
     }
 
-    @State private var searchFocused = false
-    @State private var cursorPhase   = false
+    @State private var searchFocused = true
     @State private var lastHoverPt: CGPoint? = nil
     @State private var hoverEnabled         = false
     @State private var justOpened           = true
@@ -48,10 +48,14 @@ struct PopupView: View {
                 .shadow(color: .black.opacity(0.12), radius: 32, y: 16)
         }
         .clipShape(RoundedRectangle(cornerRadius: AppTheme.panelRadius))
-        .onChange(of: state.searchText) { _, _ in state.selectedIndex = 0 }
+        .overlay {
+            if let confirmation = state.confirmation {
+                confirmationCard(confirmation)
+            }
+        }
+        .onChange(of: state.queryText) { _, _ in state.selectedIndex = 0 }
         .onChange(of: state.showToken) { _, _ in
-            searchFocused = false
-            cursorPhase   = false
+            searchFocused = true      // typing works immediately — no field to click
             justOpened    = true
             resetHoverState()
         }
@@ -61,6 +65,25 @@ struct PopupView: View {
     private func resetHoverState() {
         lastHoverPt  = nil
         hoverEnabled = false
+    }
+
+    // MARK: - Confirmation card
+
+    private func confirmationCard(_ confirmation: PopupConfirmation) -> some View {
+        let isClearAll = confirmation == .clearAll
+        return ConfirmationCard(
+            title: isClearAll ? L10n.s("Clear Clipboard History?", "清空剪贴板历史？")
+                              : L10n.s("Delete This Clip?", "删除这条记录？"),
+            message: isClearAll
+                ? L10n.s("This will permanently remove all \(store.items.count) stored items.",
+                         "将永久删除已保存的全部 \(store.items.count) 条记录。")
+                : L10n.s("This will permanently remove this item.",
+                         "将永久删除这条记录。"),
+            confirmTitle: isClearAll ? L10n.s("Clear All", "全部清空")
+                                     : L10n.s("Delete", "删除"),
+            onCancel: { state.confirmation = nil },
+            onConfirm: onConfirm
+        )
     }
 
     // MARK: - Header
@@ -93,31 +116,7 @@ struct PopupView: View {
                 Spacer()
 
                 HStack(spacing: 8) {
-                    Button { settings.hideImages.toggle() } label: {
-                        Image(systemName: settings.hideImages ? "photo.slash" : "photo")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(settings.hideImages ? Color.accentColor : Color.primary.opacity(0.4))
-                            .frame(width: 28, height: 28)
-                            .background(
-                                Circle()
-                                    .fill(settings.hideImages ? Color.accentColor.opacity(0.1) : Color.primary.opacity(0.03))
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .help(settings.hideImages ? "Show images" : "Hide images")
-
-                    Button { 
-                        let alert = NSAlert()
-                        alert.messageText = "Clear Clipboard History?"
-                        alert.informativeText = "This will permanently remove all stored items."
-                        alert.addButton(withTitle: "Clear All")
-                        alert.addButton(withTitle: "Cancel")
-                        alert.buttons[0].hasDestructiveAction = true
-                        
-                        if alert.runModal() == .alertFirstButtonReturn {
-                            store.clearAll()
-                        }
-                    } label: {
+                    Button { state.confirmation = .clearAll } label: {
                         Image(systemName: "trash")
                             .font(.system(size: 11, weight: .bold))
                             .foregroundStyle(.red.opacity(0.4))
@@ -125,7 +124,7 @@ struct PopupView: View {
                             .background(Circle().fill(Color.red.opacity(0.03)))
                     }
                     .buttonStyle(.plain)
-                    .help("Clear History")
+                    .help(L10n.s("Clear History", "清空历史"))
                 }
             }
 
@@ -138,9 +137,11 @@ struct PopupView: View {
 
     private var headerSubtitle: String {
         if filtered.isEmpty {
-            return store.items.isEmpty ? "Ready to capture" : "No results"
+            return store.items.isEmpty ? L10n.s("Ready to capture", "等待复制")
+                                       : L10n.s("No results", "无匹配结果")
         }
-        return "\(filtered.count) item\(filtered.count == 1 ? "" : "s")"
+        return L10n.s("\(filtered.count) item\(filtered.count == 1 ? "" : "s")",
+                      "\(filtered.count) 条")
     }
 
     // MARK: - Update banner
@@ -155,11 +156,12 @@ struct PopupView: View {
                 Image(systemName: "arrow.down.circle.fill")
                     .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(.green)
-                Text("v\(updateChecker.latestVersion ?? "") available")
+                Text(L10n.s("v\(updateChecker.latestVersion ?? "") available",
+                            "v\(updateChecker.latestVersion ?? "") 可更新"))
                     .font(.system(size: 11, weight: .bold, design: .rounded))
                     .foregroundStyle(.primary.opacity(0.8))
                 Spacer()
-                Text("Download")
+                Text(L10n.s("Download", "下载"))
                     .font(.system(size: 10, weight: .black, design: .rounded))
                     .foregroundStyle(.green)
                     .padding(.horizontal, 8)
@@ -182,33 +184,38 @@ struct PopupView: View {
                 .animation(.spring(response: 0.3, dampingFraction: 0.6), value: searchFocused)
 
             ZStack(alignment: .leading) {
-                if state.searchText.isEmpty {
-                    Text("Search history...")
+                if state.queryText.isEmpty {
+                    Text(L10n.s("Search history...", "搜索历史…"))
                         .font(.system(size: 14, weight: .medium, design: .rounded))
                         .foregroundStyle(.primary.opacity(0.25))
                 }
 
                 HStack(spacing: 1) {
-                    Text(state.searchText.isEmpty ? "" : state.searchText)
-                        .font(.system(size: 14, weight: .medium, design: .rounded))
-                        .foregroundStyle(.primary.opacity(0.9))
+                    if !state.searchText.isEmpty {
+                        Text(state.searchText)
+                            .font(.system(size: 14, weight: .medium, design: .rounded))
+                            .foregroundStyle(.primary.opacity(0.9))
+                    }
+
+                    // Being composed by the input method — underlined, like any
+                    // other text field's marked text.
+                    if !state.markedText.isEmpty {
+                        Text(state.markedText)
+                            .font(.system(size: 14, weight: .medium, design: .rounded))
+                            .foregroundStyle(.primary.opacity(0.9))
+                            .underline()
+                    }
 
                     Rectangle()
                         .fill(Color.accentColor)
                         .frame(width: 2, height: 16)
-                        .opacity(searchFocused && cursorPhase ? 1 : 0)
-                        .animation(
-                            searchFocused
-                                ? .easeInOut(duration: 0.5).repeatForever(autoreverses: true)
-                                : .default,
-                            value: cursorPhase
-                        )
+                        .opacity(1)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            if !state.searchText.isEmpty {
-                Button { state.searchText = "" } label: {
+            if !state.queryText.isEmpty {
+                Button { state.searchText = ""; state.markedText = "" } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 15))
                         .foregroundStyle(.primary.opacity(0.2))
@@ -268,10 +275,14 @@ struct PopupView: View {
             }
 
             VStack(spacing: 4) {
-                Text(store.items.isEmpty ? "Nothing copied yet" : "No matches")
+                Text(store.items.isEmpty ? L10n.s("Nothing copied yet", "还没有复制记录")
+                                         : L10n.s("No matches", "没有匹配项"))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.primary.opacity(0.82))
-                Text(store.items.isEmpty ? "Your recent clips will appear here." : "Try a different search or show images.")
+                Text(store.items.isEmpty ? L10n.s("Your recent clips will appear here.",
+                                                 "复制过的内容会出现在这里。")
+                                         : L10n.s("Try a different search or show images.",
+                                                 "换个关键词，或显示图片。"))
                     .font(.system(size: 11.5))
                     .foregroundStyle(.tertiary)
                     .multilineTextAlignment(.center)
@@ -365,7 +376,7 @@ struct PopupView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Image")
+                    Text(L10n.s("Image", "图片"))
                         .font(.system(size: 13, weight: .bold, design: .rounded))
                         .foregroundStyle(.primary.opacity(0.9))
                     if let app = item.sourceApp {
@@ -380,28 +391,16 @@ struct PopupView: View {
 
     private func trailingMeta(for item: ClipItem, selected: Bool) -> some View {
         VStack(alignment: .trailing, spacing: 6) {
-            if item.pinned || selected {
-                HStack(spacing: 4) {
-                    Button {
-                        store.remove(id: item.id)
-                    } label: {
-                        Image(systemName: "trash")
-                            .font(.system(size: 9.5, weight: .bold))
-                            .foregroundStyle(.red.opacity(0.4))
-                            .frame(width: 20, height: 20)
-                    }
-                    .buttonStyle(.plain)
-
-                    Button {
-                        store.togglePin(id: item.id)
-                    } label: {
-                        Image(systemName: item.pinned ? "pin.fill" : "pin")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(item.pinned ? Color.accentColor : Color.primary.opacity(0.2))
-                            .frame(width: 20, height: 20)
-                    }
-                    .buttonStyle(.plain)
+            if selected {
+                Button {
+                    state.confirmation = .delete(item.id)
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 9.5, weight: .bold))
+                        .foregroundStyle(.red.opacity(0.4))
+                        .frame(width: 20, height: 20)
                 }
+                .buttonStyle(.plain)
                 .transition(.scale.combined(with: .opacity))
             }
 
@@ -417,14 +416,14 @@ struct PopupView: View {
 
     private var hintsBar: some View {
         HStack(spacing: 12) {
-            hintChip(key: "↑↓", label: "navigate")
-            hintChip(key: "↵",  label: "paste")
-            hintChip(key: "esc", label: "close")
+            hintChip(key: "↑↓", label: L10n.s("navigate", "移动"))
+            hintChip(key: "↵",  label: L10n.s("paste", "粘贴"))
+            hintChip(key: "esc", label: L10n.s("close", "关闭"))
             Spacer()
             if settings.hideImages {
                 HStack(spacing: 4) {
                     Image(systemName: "photo.slash")
-                    Text("Images hidden")
+                    Text(L10n.s("Images hidden", "图片已隐藏"))
                 }
                 .font(.system(size: 9, weight: .bold, design: .rounded))
                 .foregroundStyle(Color.accentColor.opacity(0.4))
@@ -454,12 +453,12 @@ struct PopupView: View {
     private func shortAge(_ date: Date) -> String {
         let s = max(0, Int(Date.now.timeIntervalSince(date)))
         switch s {
-        case ..<5:      return "now"
-        case ..<60:     return "\(s)s"
-        case ..<3600:   return "\(s / 60)m"
-        case ..<86400:  return "\(s / 3600)h"
-        case ..<604800: return "\(s / 86400)d"
-        default:        return "\(s / 604800)w"
+        case ..<5:      return L10n.s("now", "刚刚")
+        case ..<60:     return L10n.s("\(s)s", "\(s)秒")
+        case ..<3600:   return L10n.s("\(s / 60)m", "\(s / 60)分")
+        case ..<86400:  return L10n.s("\(s / 3600)h", "\(s / 3600)小时")
+        case ..<604800: return L10n.s("\(s / 86400)d", "\(s / 86400)天")
+        default:        return L10n.s("\(s / 604800)w", "\(s / 604800)周")
         }
     }
 }

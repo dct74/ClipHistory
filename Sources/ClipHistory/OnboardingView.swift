@@ -20,7 +20,10 @@ struct OnboardingView: View {
         }
         .task {
             while !axGranted {
-                try? await Task.sleep(nanoseconds: 500_000_000)
+                // Leaving / closing the window cancels this task; without the
+                // catch the loop would spin without ever suspending.
+                do { try await Task.sleep(nanoseconds: 500_000_000) }
+                catch { return }
                 axGranted = AXIsProcessTrusted()
             }
         }
@@ -37,9 +40,9 @@ struct OnboardingView: View {
                 .shadow(color: .black.opacity(0.12), radius: 10, y: 5)
                 .padding(.bottom, 4)
 
-            Text("Set up ClipHistory")
+            Text(L10n.s("Set up ClipHistory", "设置 ClipHistory"))
                 .font(.system(size: 24, weight: .bold, design: .rounded))
-            Text("Three simple steps to clipboard mastery.")
+            Text(L10n.s("Three simple steps to clipboard mastery.", "三步完成剪贴板配置。"))
                 .font(.system(size: 14, weight: .medium, design: .rounded))
                 .foregroundStyle(.secondary.opacity(0.7))
         }
@@ -62,10 +65,12 @@ struct OnboardingView: View {
     private var accessibilityCard: some View {
         SetupCard(icon: "hand.raised.fill",
                   iconColor: axGranted ? .green : .orange,
-                  title: "Accessibility",
-                  subtitle: "Required to paste clips directly into your active apps.") {
+                  title: L10n.s("Accessibility", "辅助功能"),
+                  subtitle: L10n.s("Required to paste clips directly into your active apps.",
+                             "直接粘贴到正在使用的 App 需要此权限。")) {
             VStack(alignment: .trailing, spacing: 8) {
-                statusBadge(text: axGranted ? "Granted" : "Required",
+                statusBadge(text: axGranted ? L10n.s("Granted", "已授权")
+                                                : L10n.s("Required", "需要授权"),
                             color: axGranted ? .green : .orange)
 
                 if !axGranted {
@@ -74,7 +79,7 @@ struct OnboardingView: View {
                             URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
                         )
                     } label: {
-                        Label("Grant", systemImage: "arrow.up.right.square")
+                        Label(L10n.s("Grant", "去授权"), systemImage: "arrow.up.right.square")
                             .font(.system(size: 12, weight: .bold, design: .rounded))
                     }
                     .buttonStyle(.borderedProminent)
@@ -89,8 +94,9 @@ struct OnboardingView: View {
     private var launchAtLoginCard: some View {
         SetupCard(icon: "power.circle.fill",
                   iconColor: .accentColor,
-                  title: "Auto Launch",
-                  subtitle: "Start ClipHistory automatically when you log in.") {
+                  title: L10n.s("Auto Launch", "开机启动"),
+                  subtitle: L10n.s("Start ClipHistory automatically when you log in.",
+                             "登录后自动启动 ClipHistory。")) {
             Toggle("", isOn: $settings.launchAtLogin)
                 .toggleStyle(.switch)
                 .labelsHidden()
@@ -100,8 +106,9 @@ struct OnboardingView: View {
     private var shortcutCard: some View {
         SetupCard(icon: "command.circle.fill",
                   iconColor: .blue,
-                  title: "Shortcut",
-                  subtitle: "The key combination to show your clipboard history.") {
+                  title: L10n.s("Shortcut", "快捷键"),
+                  subtitle: L10n.s("The key combination to show your clipboard history at the cursor.",
+                             "在光标处展开剪贴板历史的组合键。")) {
             Text(settings.hotkey.displayString)
                 .font(.system(size: 13, weight: .bold, design: .monospaced))
                 .foregroundStyle(.primary.opacity(0.8))
@@ -116,15 +123,17 @@ struct OnboardingView: View {
     private var footer: some View {
         HStack(spacing: 16) {
             Text(axGranted
-                 ? "You're all set! Enjoy your new clipboard power."
-                 : "You can finish now and grant access later in Settings.")
+                 ? L10n.s("You're all set! Enjoy your new clipboard power.",
+                          "全部就绪，开始使用吧。")
+                 : L10n.s("You can finish now and grant access later in Settings.",
+                          "也可以先完成后在设置里再授权。"))
                 .font(.system(size: 12, weight: .medium, design: .rounded))
                 .foregroundStyle(.secondary.opacity(0.6))
                 .fixedSize(horizontal: false, vertical: true)
 
             Spacer()
 
-            Button("Get Started") { onDone() }
+            Button(L10n.s("Get Started", "开始使用")) { onDone() }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
                 .keyboardShortcut(.return)

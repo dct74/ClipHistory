@@ -7,14 +7,24 @@ private func clipHistoryHotkeyHandler(
     _ event: EventRef?,
     _ userData: UnsafeMutableRawPointer?
 ) -> OSStatus {
-    guard let userData else { return noErr }
+    guard let userData, let event else { return noErr }
+
+    var hotkeyID = EventHotKeyID()
+    let status = GetEventParameter(event,
+                                   EventParamName(kEventParamDirectObject),
+                                   EventParamType(typeEventHotKeyID),
+                                   nil,
+                                   MemoryLayout<EventHotKeyID>.size,
+                                   nil,
+                                   &hotkeyID)
+    guard status == noErr else { return noErr }
 
     let delegate = Unmanaged<AppDelegate>.fromOpaque(userData).takeUnretainedValue()
-    delegate.showPopupFromHotkey()
+    delegate.handleHotkey(id: hotkeyID.id)
     return noErr
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate {
 
     // MARK: - Core objects
 
@@ -33,10 +43,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Background work
 
-    private var hotkeyRef:          EventHotKeyRef?
+    private var hotkeyRefs:          [UInt32: EventHotKeyRef] = [:]
     private var eventHandlerRef:     EventHandlerRef?
     private var clipboardTimer:      Timer?
     private var lastFrontmostSource: SourceApp?   // updated on every app-switch
+    private var lastPasteboardChangeCount = NSPasteboard.general.changeCount
+
+    private static let popupHotkeyID:     UInt32 = 1
+    private static let pasteLatestHotkeyID: UInt32 = 2
+    private static let pasteNextHotkeyID: UInt32 = 3
+    private static let pasteAllHotkeyID:  UInt32 = 4
 
     // MARK: - Lifecycle
 
@@ -49,8 +65,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         popup         = PopupWindowController(store: store, settings: settings, updateChecker: updateChecker)
 
         // Wire setting-change callbacks
-        settings.onHotkeyChanged   = { [weak self] _ in self?.reRegisterHotkey() }
+        settings.onHotkeysChanged  = { [weak self] in self?.reRegisterHotkeys() }
         settings.onMaxItemsChanged = { [weak self] n  in self?.store.updateMaxCount(n) }
+        store.onItemCaptured       = { [weak self] in self?.popup.resetPasteCycle() }
 
         setupMenuBar()
         startFrontmostAppTracking()
@@ -64,7 +81,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         clipboardTimer?.invalidate()
-        unregisterHotkey()
+        store.flushNow()          // the 1 s debounce would otherwise drop the last clip
+        unregisterHotkeys()
         if let eventHandlerRef {
             RemoveEventHandler(eventHandlerRef)
         }
@@ -85,11 +103,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         hotkeyHintItem = hint
 
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Settings…",
+        menu.addItem(NSMenuItem(title: L10n.s("Settings…", "设置…"),
                                 action: #selector(openSettings),
                                 keyEquivalent: ","))
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit",
+        menu.addItem(NSMenuItem(title: L10n.s("Quit", "退出"),
                                 action: #selector(quit),
                                 keyEquivalent: "q"))
         statusItem?.menu = menu
@@ -100,7 +118,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         hotkeyHintItem?.title = hintTitle
     }
 
-    private var hintTitle: String { "ClipHistory  —  \(settings.hotkey.displayString) to open" }
+    private var hintTitle: String {
+        L10n.s("ClipHistory  —  \(settings.hotkey.displayString) to open",
+               "ClipHistory  —  \(settings.hotkey.displayString) 打开")
+    }
 
     // MARK: - Settings window
 
@@ -119,9 +140,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                      })
         let controller = NSHostingController(rootView: view)
         let win        = NSWindow(contentViewController: controller)
-        win.title                = "ClipHistory Settings"
+        win.title                = L10n.s("ClipHistory Settings", "ClipHistory 设置")
         win.styleMask            = NSWindow.StyleMask([.titled, .closable])
         win.isReleasedWhenClosed = false
+        win.delegate = self          // released in windowWillClose
         win.center()
         settingsWindow = win
 
@@ -130,6 +152,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func quit() { NSApp.terminate(nil) }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let win = notification.object as? NSWindow, win === settingsWindow else { return }
+        settingsWindow = nil
+    }
 
     // MARK: - Onboarding
 
@@ -152,7 +179,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         let controller = NSHostingController(rootView: view)
         let win = NSWindow(contentViewController: controller)
-        win.title                = "ClipHistory Setup"
+        win.title                = L10n.s("ClipHistory Setup", "ClipHistory 向导")
         win.styleMask            = [.titled, .closable]
         win.isReleasedWhenClosed = false
         win.center()
@@ -193,28 +220,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
               app.bundleIdentifier != Bundle.main.bundleIdentifier,
               let name = app.localizedName
         else { return }
-        lastFrontmostSource = SourceApp(bundleID: app.bundleIdentifier ?? "", name: name)
+        let source = SourceApp(bundleID: app.bundleIdentifier ?? "", name: name)
+        guard source != lastFrontmostSource else { return }
+
+        // A copy made just before the switch still belongs to the app that made
+        // it — flush it first so the exclusion list is checked against the right
+        // app, and so attribution isn't taken from the app we switched to.
+        capturePendingClipboard()
+
+        lastFrontmostSource = source
+        // A new app means a new copy/paste context — restart the paste cycle.
+        popup.resetPasteCycle()
+
+        // The popup no longer owns the keyboard: leaving it up would keep the
+        // event tap swallowing keystrokes meant for the newly focused app.
+        popup.hideIfVisible()
     }
 
     // MARK: - Clipboard polling
 
     private func startClipboardMonitoring() {
-        // Capture whatever is already on the clipboard at launch
-        store.pollClipboard(source: lastFrontmostSource)
+        // Capture whatever is already on the clipboard at launch — through the
+        // same exclusion filter the polling path uses.
+        capture(from: lastFrontmostSource)
 
-        var lastCount = NSPasteboard.general.changeCount
         clipboardTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            let count = NSPasteboard.general.changeCount
-            if count != lastCount {
-                lastCount = count
-                guard let self else { return }
-                let source = self.lastFrontmostSource
-                // Skip apps the user has excluded from capture.
-                if let bid = source?.bundleID,
-                   self.settings.excludedBundleIDs.contains(bid) { return }
-                self.store.pollClipboard(source: source)
-            }
+            self?.capturePendingClipboard()
         }
+    }
+
+    /// Polls only when the pasteboard actually changed since the last look.
+    private func capturePendingClipboard() {
+        let changeCount = NSPasteboard.general.changeCount
+        guard changeCount != lastPasteboardChangeCount else { return }
+        lastPasteboardChangeCount = changeCount
+        capture(from: lastFrontmostSource)
+    }
+
+    private func capture(from source: SourceApp?) {
+        // Apps on the exclusion list never end up in the history.
+        if let bundleID = source?.bundleID, settings.excludedBundleIDs.contains(bundleID) { return }
+        store.pollClipboard(source: source)
     }
 
     // MARK: - Global hotkey
@@ -222,31 +268,74 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func requestAccessibilityAndRegisterHotkey() {
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         AXIsProcessTrustedWithOptions(opts)
-        reRegisterHotkey()
+        reRegisterHotkeys()
     }
 
-    private func reRegisterHotkey() {
+    private func reRegisterHotkeys() {
         installHotkeyHandlerIfNeeded()
-        unregisterHotkey()
+        unregisterHotkeys()
 
-        let hotkeyID = EventHotKeyID(signature: Self.hotkeySignature, id: Self.hotkeyID)
+        var failed = Set<String>()
+        if !register(settings.hotkey, id: Self.popupHotkeyID) {
+            failed.insert(L10n.s("Open Popup", "打开面板"))
+        }
+        if !register(settings.pasteLatestHotkey, id: Self.pasteLatestHotkeyID) {
+            failed.insert(L10n.s("Paste Latest", "粘贴最近一条"))
+        }
+        if !register(settings.pasteNextHotkey, id: Self.pasteNextHotkeyID) {
+            failed.insert(L10n.s("Paste Next Item", "依次粘贴"))
+        }
+        if !register(settings.pasteAllHotkey, id: Self.pasteAllHotkeyID) {
+            failed.insert(L10n.s("Paste All Items", "全部粘贴"))
+        }
+        settings.unavailableHotkeys = failed
+    }
+
+    /// Returns false when the system refused the combination (already owned by
+    /// another app, or bound twice), so Settings can say so instead of silently
+    /// showing a shortcut that never fires.
+    private func register(_ shortcut: HotkeyShortcut, id: UInt32) -> Bool {
+        var ref: EventHotKeyRef?
         let status = RegisterEventHotKey(
-            UInt32(settings.hotkey.keyCode),
-            settings.hotkey.carbonModifierFlags,
-            hotkeyID,
+            UInt32(shortcut.keyCode),
+            shortcut.carbonModifierFlags,
+            EventHotKeyID(signature: Self.hotkeySignature, id: id),
             GetApplicationEventTarget(),
             0,
-            &hotkeyRef
+            &ref
         )
+        guard status == noErr, let ref else {
+            NSLog("ClipHistory failed to register hotkey \(id): \(status)")
+            return false
+        }
+        hotkeyRefs[id] = ref
+        return true
+    }
 
-        if status != noErr {
-            NSLog("ClipHistory failed to register hotkey: \(status)")
+    /// Carbon delivers every registered hotkey here; the ID says which one.
+    fileprivate func handleHotkey(id: UInt32) {
+        // Synthesized ⌘V presses are ours — acting on them would loop forever.
+        guard !popup.hotkeysSuppressed else { return }
+
+        switch id {
+        case Self.pasteLatestHotkeyID:
+            DispatchQueue.main.async { [weak self] in self?.popup.pasteLatest() }
+        case Self.pasteNextHotkeyID:
+            DispatchQueue.main.async { [weak self] in self?.popup.pasteNextInOrder() }
+        case Self.pasteAllHotkeyID:
+            DispatchQueue.main.async { [weak self] in self?.popup.pasteAllInOrder() }
+        default:
+            showPopupFromHotkey()
         }
     }
 
     fileprivate func showPopupFromHotkey() {
         DispatchQueue.main.async { [weak self] in
-            self?.popup.show(near: NSEvent.mouseLocation)
+            // Open at the text caret when the focused app reports one,
+            // otherwise fall back to the pointer.
+            let anchor = CaretLocator.currentRect()
+                ?? CGRect(origin: NSEvent.mouseLocation, size: .zero)
+            self?.popup.show(near: anchor)
         }
     }
 
@@ -272,15 +361,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    private func unregisterHotkey() {
-        if let hotkeyRef {
-            UnregisterEventHotKey(hotkeyRef)
-            self.hotkeyRef = nil
-        }
+    private func unregisterHotkeys() {
+        for (_, ref) in hotkeyRefs { UnregisterEventHotKey(ref) }
+        hotkeyRefs.removeAll()
     }
 
     private static let hotkeySignature: OSType = 0x43484B59 // "CHKY"
-    private static let hotkeyID: UInt32 = 1
 }
 
 // MARK: - Onboarding window delegate

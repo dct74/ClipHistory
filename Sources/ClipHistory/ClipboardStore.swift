@@ -62,20 +62,18 @@ struct ClipItem: Identifiable, Equatable {
     let content:   ClipContent
     let date:      Date
     let sourceApp: SourceApp?
-    var pinned:    Bool
 
-    init(content: ClipContent, date: Date = .now, sourceApp: SourceApp? = nil, pinned: Bool = false) {
+    init(content: ClipContent, date: Date = .now, sourceApp: SourceApp? = nil) {
         self.id        = UUID()
         self.content   = content
         self.date      = date
         self.sourceApp = sourceApp
-        self.pinned    = pinned
     }
 
     var preview: String {
         switch content {
         case .text(let t): return t.trimmingCharacters(in: .whitespacesAndNewlines)
-        case .image:       return "Image"
+        case .image:       return L10n.s("Image", "图片")
         }
     }
 
@@ -91,7 +89,7 @@ struct ClipItem: Identifiable, Equatable {
 }
 
 extension ClipItem: Codable {
-    private enum CK: String, CodingKey { case id, content, date, sourceApp, text, pinned }
+    private enum CK: String, CodingKey { case id, content, date, sourceApp, text }
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CK.self)
@@ -99,7 +97,6 @@ extension ClipItem: Codable {
         try c.encode(content,   forKey: .content)
         try c.encode(date,      forKey: .date)
         try c.encodeIfPresent(sourceApp, forKey: .sourceApp)
-        if pinned { try c.encode(true, forKey: .pinned) }
     }
 
     init(from decoder: Decoder) throws {
@@ -107,7 +104,6 @@ extension ClipItem: Codable {
         id        = try  c.decode(UUID.self,      forKey: .id)
         date      = try  c.decode(Date.self,      forKey: .date)
         sourceApp = try? c.decode(SourceApp.self, forKey: .sourceApp)
-        pinned    = (try? c.decode(Bool.self,     forKey: .pinned)) ?? false
 
         if let cont = try? c.decode(ClipContent.self, forKey: .content) {
             content = cont
@@ -120,6 +116,16 @@ extension ClipItem: Codable {
     }
 }
 
+/// Wrapper that swallows per-element decoding failures, so one corrupt record
+/// can't take the whole history with it.
+private struct LossyClipItem: Decodable {
+    let value: ClipItem?
+
+    init(from decoder: Decoder) throws {
+        value = try? ClipItem(from: decoder)
+    }
+}
+
 // MARK: - Store
 
 @Observable
@@ -127,7 +133,17 @@ final class ClipboardStore {
     private(set) var items: [ClipItem] = []
     private var maxCount: Int
 
-    var suppressNextPoll = false
+    /// Pasteboard generation of the clip we captured last.
+    private(set) var lastCapturedChangeCount = -1
+
+    /// Pasteboard generation of our own last write. Capture is skipped when the
+    /// pasteboard still holds it — exact, with no timing window, unlike the old
+    /// "suppress the next poll" flag.
+    private(set) var lastWrittenChangeCount = -1
+
+    /// Fired whenever a new clip lands in the history — drives resetting the
+    /// paste cycle.
+    var onItemCaptured: (() -> Void)?
 
     // Decoded-image cache — avoids re-inflating PNG bytes on every render pass.
     // Keyed by item UUID so entries are automatically orphaned when items are evicted.
@@ -152,6 +168,7 @@ final class ClipboardStore {
         self.maxCount      = maxCount
         self.encryptionKey = ClipboardStore.loadOrCreateKey()
         imageCache.countLimit = maxCount * 2
+        imageCache.totalCostLimit = 64 * 1024 * 1024   // decoded images, ~480 px each
         load()
     }
 
@@ -162,16 +179,24 @@ final class ClipboardStore {
         if let hit = imageCache.object(forKey: key) { return hit }
         guard case .image(let data) = item.content,
               let img = NSImage(data: data) else { return nil }
-        imageCache.setObject(img, forKey: key)
+        imageCache.setObject(img, forKey: key, cost: data.count)
         return img
+    }
+
+    /// Records the pasteboard generation of a write we just performed, so the
+    /// next poll ignores it instead of storing our own paste back as a new clip.
+    func noteOwnWrite() {
+        lastWrittenChangeCount = NSPasteboard.general.changeCount
     }
 
     // MARK: - Public API
 
     func pollClipboard(source: SourceApp? = nil) {
-        if suppressNextPoll { suppressNextPoll = false; return }
-
         let pb = NSPasteboard.general
+        let changeCount = pb.changeCount
+
+        // Our own paste (single or paste-all) — never capture it back.
+        if changeCount == lastWrittenChangeCount { return }
 
         // Skip items explicitly marked as sensitive by the source app
         // (1Password, Keychain prompts, etc. set this type on the pasteboard).
@@ -187,7 +212,7 @@ final class ClipboardStore {
         ) as? [URL], !urls.isEmpty {
             for url in urls where imageExts.contains(url.pathExtension.lowercased()) {
                 if let img = NSImage(contentsOf: url), let thumb = img.pngThumbnail() {
-                    add(ClipItem(content: .image(thumb), sourceApp: source))
+                    add(ClipItem(content: .image(thumb), sourceApp: source), changeCount: changeCount)
                     return
                 }
             }
@@ -204,7 +229,7 @@ final class ClipboardStore {
            let imgs = pb.readObjects(forClasses: [NSImage.self], options: nil) as? [NSImage],
            let img  = imgs.first(where: { $0.isValid }),
            let thumb = img.pngThumbnail() {
-            add(ClipItem(content: .image(thumb), sourceApp: source))
+            add(ClipItem(content: .image(thumb), sourceApp: source), changeCount: changeCount)
             return
         }
 
@@ -213,7 +238,7 @@ final class ClipboardStore {
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               text != items.first?.textContent
         else { return }
-        add(ClipItem(content: .text(text), sourceApp: source))
+        add(ClipItem(content: .text(text), sourceApp: source), changeCount: changeCount)
     }
 
     func clearAll() {
@@ -229,13 +254,6 @@ final class ClipboardStore {
         scheduleSave()
     }
 
-    func togglePin(id: UUID) {
-        guard let idx = items.firstIndex(where: { $0.id == id }) else { return }
-        items[idx].pinned.toggle()
-        reorder()
-        scheduleSave()
-    }
-
     func remove(id: UUID) {
         if let idx = items.firstIndex(where: { $0.id == id }) {
             items.remove(at: idx)
@@ -244,42 +262,37 @@ final class ClipboardStore {
         }
     }
 
+    /// Display order: oldest clip first, newest last. Storage stays newest-first
+    /// internally, so capture, dedupe and trimming keep working on the head.
     func filtered(query: String, showImages: Bool = true) -> [ClipItem] {
         var result = items
         if !showImages { result = result.filter { !$0.isImage } }
-        guard !query.isEmpty else { return result }
-        return result.filter {
-            $0.preview.localizedCaseInsensitiveContains(query) ||
-            ($0.sourceApp?.name.localizedCaseInsensitiveContains(query) ?? false)
+        if !query.isEmpty {
+            result = result.filter {
+                $0.preview.localizedCaseInsensitiveContains(query) ||
+                ($0.sourceApp?.name.localizedCaseInsensitiveContains(query) ?? false)
+            }
         }
+        return Array(result.reversed())
     }
 
     // MARK: - Private helpers
 
-    private func add(_ item: ClipItem) {
+    private func add(_ item: ClipItem, changeCount: Int) {
+        lastCapturedChangeCount = changeCount
         items.insert(item, at: 0)
         trimToLimit()
         scheduleSave()
+        onItemCaptured?()
     }
 
     private func trimToLimit() {
-        let pinned   = items.filter { $0.pinned }
-        let unpinned = items.filter { !$0.pinned }
-        // Both pinned and unpinned capped independently at maxCount
-        let trimmedPinned   = Array(pinned.prefix(maxCount))
-        let trimmedUnpinned = Array(unpinned.prefix(maxCount))
-        // Evict decoded images for removed items
-        let kept = Set((trimmedPinned + trimmedUnpinned).map { $0.id })
-        for item in items where !kept.contains(item.id) {
+        // Newest entries live at the head — keep those, evict the tail.
+        let kept = Array(items.prefix(maxCount))
+        for item in items.dropFirst(kept.count) {
             imageCache.removeObject(forKey: item.id as NSUUID)
         }
-        items = trimmedPinned + trimmedUnpinned
-    }
-
-    private func reorder() {
-        let pinned   = items.filter { $0.pinned }
-        let unpinned = items.filter { !$0.pinned }
-        items = pinned + unpinned
+        items = kept
     }
 
     // MARK: - Debounced save
@@ -293,16 +306,34 @@ final class ClipboardStore {
 
     private func flushSave() {
         pendingSave = nil
-        // Snapshot on the main thread, then encrypt + write off it so a large
-        // history never hitches the popup mid-animation.
         guard let plain = try? JSONEncoder().encode(items) else { return }
         let key = encryptionKey
         let url = saveURL
+        // Snapshot on the main thread, then encrypt + write off it so a large
+        // history never hitches the popup mid-animation.
         ClipboardStore.saveQueue.async {
-            guard let sealed = try? AES.GCM.seal(plain, using: key),
-                  let combined = sealed.combined else { return }
-            try? combined.write(to: url, options: .atomic)
+            ClipboardStore.write(plain, key: key, to: url)
         }
+    }
+
+    /// Writes any pending change before the process exits — the 1 s debounce
+    /// would otherwise drop a clip copied right before "Quit".
+    func flushNow() {
+        pendingSave?.cancel()
+        pendingSave = nil
+        guard let plain = try? JSONEncoder().encode(items) else { return }
+        let key = encryptionKey
+        let url = saveURL
+        _ = ClipboardStore.saveQueue.sync {
+            ClipboardStore.write(plain, key: key, to: url)
+        }
+    }
+
+    @discardableResult
+    private static func write(_ plain: Data, key: SymmetricKey, to url: URL) -> Bool {
+        guard let sealed = try? AES.GCM.seal(plain, using: key),
+              let combined = sealed.combined else { return false }
+        return (try? combined.write(to: url, options: .atomic)) != nil
     }
 
     private static let saveQueue = DispatchQueue(label: "com.weiyuankong.cliphistory.save",
@@ -311,22 +342,45 @@ final class ClipboardStore {
     // MARK: - Load (decrypts + falls back to legacy plaintext)
 
     private func load() {
-        if let enc = try? Data(contentsOf: saveURL),
-           let box = try? AES.GCM.SealedBox(combined: enc),
-           let plain = try? AES.GCM.open(box, using: encryptionKey),
-           let saved = try? JSONDecoder().decode([ClipItem].self, from: plain) {
-            items = Array(saved.prefix(maxCount * 2))
+        if let enc = try? Data(contentsOf: saveURL) {
+            if let box = try? AES.GCM.SealedBox(combined: enc),
+               let plain = try? AES.GCM.open(box, using: encryptionKey) {
+                items = Array(Self.decodeItems(plain).prefix(maxCount * 2))
+            } else {
+                // Wrong key or damaged file: keep it for the user instead of
+                // letting the next debounced save overwrite the only copy.
+                NSLog("ClipHistory: history could not be decrypted — moved aside")
+                quarantineHistory()
+            }
             return
         }
 
         // Migrate legacy unencrypted history.json if present
         let legacyURL = saveURL.deletingLastPathComponent().appendingPathComponent("history.json")
-        if let data  = try? Data(contentsOf: legacyURL),
-           let saved = try? JSONDecoder().decode([ClipItem].self, from: data) {
-            items = Array(saved.prefix(maxCount * 2))
-            flushSave()                          // re-save encrypted immediately
-            try? FileManager.default.removeItem(at: legacyURL)
+        if let data = try? Data(contentsOf: legacyURL) {
+            items = Array(Self.decodeItems(data).prefix(maxCount * 2))
+            // Only drop the plaintext file once the encrypted write succeeded.
+            let plain = try? JSONEncoder().encode(items)
+            let key   = encryptionKey
+            let url   = saveURL
+            ClipboardStore.saveQueue.sync {
+                guard let plain, ClipboardStore.write(plain, key: key, to: url) else { return }
+                try? FileManager.default.removeItem(at: legacyURL)
+            }
         }
+    }
+
+    /// Decodes element by element so one damaged record doesn't discard the
+    /// whole history.
+    private static func decodeItems(_ data: Data) -> [ClipItem] {
+        guard let lossy = try? JSONDecoder().decode([LossyClipItem].self, from: data) else { return [] }
+        return lossy.compactMap(\.value)
+    }
+
+    private func quarantineHistory() {
+        let aside = saveURL.appendingPathExtension("unreadable")
+        try? FileManager.default.removeItem(at: aside)
+        try? FileManager.default.moveItem(at: saveURL, to: aside)
     }
 
     // MARK: - Keychain key management
@@ -359,7 +413,10 @@ final class ClipboardStore {
         ]
         // Delete stale entry (wrong size) before inserting
         SecItemDelete(query as CFDictionary)
-        SecItemAdd(add as CFDictionary, nil)
+        let status = SecItemAdd(add as CFDictionary, nil)
+        if status != errSecSuccess {
+            NSLog("ClipHistory: could not store encryption key: \(status)")
+        }
         return key
     }
 }
