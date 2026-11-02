@@ -8,7 +8,7 @@ import Observation
 final class UpdateChecker {
 
     /// Current app version — bump this when tagging a new release.
-    static let currentVersion = "1.5.0"
+    static let currentVersion = "1.5.1"
 
     // MARK: - Observable state
 
@@ -24,7 +24,7 @@ final class UpdateChecker {
     /// Fires a single request to the GitHub Releases API.
     /// Safe to call from any thread; updates are dispatched to main.
     func checkForUpdate() {
-        let urlString = "https://api.github.com/repos/weiykong/ClipHistory/releases/latest"
+        let urlString = "https://api.github.com/repos/dct74/ClipHistory/releases/latest"
         guard let url = URL(string: urlString) else { return }
 
         var request = URLRequest(url: url)

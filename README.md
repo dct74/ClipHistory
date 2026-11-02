@@ -7,12 +7,18 @@
 **A lightweight, native macOS clipboard manager.**  
 One hotkey. Instant popup. Text and images. No subscription.
 
-[![CI](https://github.com/weiykong/ClipHistory/actions/workflows/ci.yml/badge.svg)](https://github.com/weiykong/ClipHistory/actions/workflows/ci.yml)
-[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-blue)](https://github.com/weiykong/ClipHistory/releases/latest)
+> **This is a fork of [weiykong/ClipHistory](https://github.com/weiykong/ClipHistory).**
+> The app and its design are the upstream author's work; this fork adds the paste
+> model, caret-anchored popup and CJK search described below, and publishes its own
+> builds. For the original project — issues, history, upstream releases — see
+> **[github.com/weiykong/ClipHistory](https://github.com/weiykong/ClipHistory)**.
+
+[![CI](https://github.com/dct74/ClipHistory/actions/workflows/ci.yml/badge.svg)](https://github.com/dct74/ClipHistory/actions/workflows/ci.yml)
+[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-blue)](https://github.com/dct74/ClipHistory/releases/latest)
 [![Swift 5.9](https://img.shields.io/badge/Swift-5.9-orange)](https://swift.org)
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-[**Download for Mac**](https://github.com/weiykong/ClipHistory/releases/latest/download/ClipHistory.dmg) · [Website](https://weiykong.github.io/ClipHistory) · [Releases](https://github.com/weiykong/ClipHistory/releases)
+[**Download for Mac**](https://github.com/dct74/ClipHistory/releases/latest/download/ClipHistory.dmg) · [Website](https://github.com/dct74/ClipHistory/blob/main/docs/index.html) · [Releases](https://github.com/dct74/ClipHistory/releases)
 
 </div>
 
@@ -59,9 +65,18 @@ If you want 200 features, use Raycast. If you want iCloud sync, use Paste. If yo
 
 ## Install
 
-### Download (recommended)
+### Homebrew (recommended)
 
-1. [**Download ClipHistory.dmg**](https://github.com/weiykong/ClipHistory/releases/latest/download/ClipHistory.dmg)
+```bash
+brew install --cask dct74/tap/cliphistory
+```
+
+Upgrades: `brew upgrade --cask cliphistory` · Uninstall: `brew uninstall --cask cliphistory`
+(add `--zap` to drop the stored history and preferences too).
+
+### Download
+
+1. [**Download ClipHistory.dmg**](https://github.com/dct74/ClipHistory/releases/latest/download/ClipHistory.dmg)
 2. Open the DMG and drag **ClipHistory.app** to `/Applications`
 3. **Verify the download** (recommended) — the release ships a checksum:
    ```bash
@@ -79,7 +94,7 @@ If you want 200 features, use Raycast. If you want iCloud sync, use Paste. If yo
 ### Build from source
 
 ```bash
-git clone https://github.com/weiykong/ClipHistory.git
+git clone https://github.com/dct74/ClipHistory.git
 cd ClipHistory
 bash scripts/build-dmg.sh   # → dist/ClipHistory.dmg
 ```
