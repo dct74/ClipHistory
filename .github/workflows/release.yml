@@ -25,41 +25,26 @@ jobs:
       - name: Build DMG
         run: bash scripts/build-dmg.sh
 
-      # Extract "1.2.3" from the tag "v1.2.3"
-      - name: Get version
-        id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-
-      # Bump CFBundleVersion in Info.plist inside the already-built app
-      - name: Stamp version into bundle
+      # build-dmg.sh stamps the bundle from UpdateChecker.currentVersion, so a
+      # tag that disagrees with the source would ship a build whose in-app
+      # updater compares against a different number. Fail instead of patching.
+      - name: Check tag matches source version
         run: |
-          plist="dist/ClipHistory.app/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c \
-            "Set :CFBundleVersion ${{ steps.version.outputs.version }}" "$plist"
-          /usr/libexec/PlistBuddy -c \
-            "Set :CFBundleShortVersionString ${{ steps.version.outputs.version }}" "$plist"
-          # Re-sign after modifying the bundle
-          codesign --force --deep --sign - dist/ClipHistory.app
-
-      # Rebuild the DMG with the stamped bundle
-      - name: Repack DMG
-        run: |
-          rm -f dist/ClipHistory.dmg
-          STAGING="$(mktemp -d)"
-          cp -r dist/ClipHistory.app "$STAGING/"
-          ln -s /Applications "$STAGING/Applications"
-          hdiutil create \
-            -volname "ClipHistory" \
-            -srcfolder "$STAGING" \
-            -ov -format UDZO \
-            -o dist/ClipHistory.dmg
-          rm -rf "$STAGING"
+          source_version="$(sed -n 's/.*currentVersion = "\(.*\)"/\1/p' Sources/ClipHistory/UpdateChecker.swift | head -1)"
+          tag_version="${GITHUB_REF_NAME#v}"
+          echo "tag=$tag_version  UpdateChecker.currentVersion=$source_version"
+          if [ "$tag_version" != "$source_version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match UpdateChecker.currentVersion ($source_version)"
+            exit 1
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "ClipHistory ${{ steps.version.outputs.version }}"
+          name: "ClipHistory ${{ github.ref_name }}"
           tag_name: ${{ github.ref_name }}
-          files: dist/ClipHistory.dmg
+          files: |
+            dist/ClipHistory.dmg
+            dist/ClipHistory.dmg.sha256
           generate_release_notes: true   # auto-fills changelog from commits
           fail_on_unmatched_files: true

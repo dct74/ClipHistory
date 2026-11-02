@@ -7,10 +7,28 @@ DIST="$ROOT/dist"
 APP_BUNDLE="$DIST/$APP_NAME.app"
 DMG="$DIST/$APP_NAME.dmg"
 
+# Single source of truth for the version — the value the app itself reports.
+VERSION="$(sed -n 's/.*currentVersion = "\(.*\)"/\1/p' "$ROOT/Sources/ClipHistory/UpdateChecker.swift" | head -1)"
+if [ -z "$VERSION" ]; then
+    echo "✗ Could not read currentVersion from UpdateChecker.swift" >&2
+    exit 1
+fi
+
+# Command Line Tools ship without SwiftUI's macro plugin (needed for
+# @State/@Bindable), so `swift build` fails on a CLT-only setup. Borrow Xcode's
+# copy when it's around. `set -u` + bash 3.2 means the empty-array idiom below.
+SWIFT_FLAGS=()
+TOOLCHAIN_PLUGINS="$(xcode-select -p)/usr/lib/swift/host/plugins"
+XCODE_PLUGIN_PATH="/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib/swift/host/plugins"
+if [ ! -f "$TOOLCHAIN_PLUGINS/libSwiftUIMacros.dylib" ] && [ -f "$XCODE_PLUGIN_PATH/libSwiftUIMacros.dylib" ]; then
+    echo "▸ Toolchain lacks libSwiftUIMacros.dylib — using Xcode's macro plugins"
+    SWIFT_FLAGS=(-Xswiftc -plugin-path -Xswiftc "$XCODE_PLUGIN_PATH")
+fi
+
 # ── 1. Release build ──────────────────────────────────────────────────────────
 echo "▸ Building release binary…"
 cd "$ROOT"
-swift build -c release
+swift build -c release ${SWIFT_FLAGS[@]+"${SWIFT_FLAGS[@]}"}
 
 # ── 2. Generate app icon ──────────────────────────────────────────────────────
 echo "▸ Generating icons…"
@@ -53,11 +71,12 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<'PLIST'
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
 
+    <!-- Stamped from UpdateChecker.currentVersion below (PlistBuddy). -->
     <key>CFBundleVersion</key>
-    <string>1.3.0</string>
+    <string>0</string>
 
     <key>CFBundleShortVersionString</key>
-    <string>1.3.0</string>
+    <string>0</string>
 
     <key>CFBundlePackageType</key>
     <string>APPL</string>
@@ -81,6 +100,10 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
+# Stamp the version read from the source above.
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION"            "$APP_BUNDLE/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP_BUNDLE/Contents/Info.plist"
+
 # ── 4. Ad-hoc code sign ───────────────────────────────────────────────────────
 echo "▸ Code signing (ad-hoc)…"
 codesign --force --deep --sign - "$APP_BUNDLE"
@@ -102,7 +125,12 @@ hdiutil create \
     -format    UDZO \
     -o         "$DMG"
 
+# ── 6. Checksum (users verify the download with it) ──────────────────────────
+echo "▸ Writing checksum…"
+( cd "$DIST" && shasum -a 256 "$APP_NAME.dmg" > "$APP_NAME.dmg.sha256" )
+
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo ""
 echo "✓  $DMG"
+cat "$DIST/$APP_NAME.dmg.sha256"
 echo "   Open the DMG and drag $APP_NAME.app → Applications to install."
