@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ClipHistory — Clipboard Manager for macOS</title>
-  <meta name="description" content="A lightweight, native macOS clipboard manager. Instant hotkey popup, text & images, search, pin favourites." />
+  <meta name="description" content="A lightweight, native macOS clipboard manager. Popup at your text caret, text &amp; images, search, per-app exclusions." />
 
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -457,7 +457,7 @@
     <div class="feature-card">
       <div class="feature-icon">⚡️</div>
       <h3>Instant hotkey popup</h3>
-      <p>Press your hotkey from any app — the popup appears right at your cursor. Fully customisable shortcut.</p>
+      <p>Press your hotkey from any app — the popup opens beside your text caret, never covering it. Fully customisable shortcut.</p>
     </div>
     <div class="feature-card">
       <div class="feature-icon">🔍</div>
@@ -467,12 +467,12 @@
     <div class="feature-card">
       <div class="feature-icon">🖼️</div>
       <h3>Text &amp; images</h3>
-      <p>Captures screenshots, images copied from browsers or Finder, alongside plain and rich text.</p>
+      <p>Captures screenshots, images copied from browsers or Finder, and plain text — with the source app attached.</p>
     </div>
     <div class="feature-card">
-      <div class="feature-icon">📌</div>
-      <h3>Pin favourites</h3>
-      <p>Pin items you reach for constantly. They float to the top and are never pushed out by new copies.</p>
+      <div class="feature-icon">⌨️</div>
+      <h3>Paste in order</h3>
+      <p><code>⌘V</code> pastes normally, <code>⌃⌘V</code> walks the history one clip per press, <code>⌃⌥⌘V</code> pastes everything in one run.</p>
     </div>
     <div class="feature-card">
       <div class="feature-icon">🔒</div>
@@ -495,9 +495,11 @@
 <!-- ── Hotkey ── -->
 <div class="shortcut-section" style="margin: 0 24px 96px; max-width: 960px; margin-left: auto; margin-right: auto;">
   <h2 style="font-size:28px;font-weight:700;letter-spacing:-0.02em;margin-bottom:10px">One shortcut away.</h2>
-  <p>Press the hotkey from anywhere — your clipboard history appears at your cursor, ready to paste.</p>
+  <p>Press the hotkey from anywhere — your clipboard history opens beside the text caret, ready to paste.</p>
   <div class="keys">
-    <span class="key">⌥</span>
+    <span class="key">⇧</span>
+    <span class="key-plus">+</span>
+    <span class="key">⌘</span>
     <span class="key-plus">+</span>
     <span class="key">V</span>
   </div>

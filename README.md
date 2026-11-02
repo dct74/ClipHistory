@@ -33,7 +33,7 @@ If you want 200 features, use Raycast. If you want iCloud sync, use Paste. If yo
 | | |
 |---|---|
 | ✅ Free & open source | ✅ Text & images |
-| ✅ Native Swift — ~1 MB | ✅ Pin favourites |
+| ✅ Native Swift — ~1 MB | ✅ Paste clips one by one |
 | ✅ Search as you type | ✅ Per-app privacy exclusions |
 | ✅ Source app icons | ✅ Survives restarts |
 | ✅ Launch at Login | ✅ No subscription, no telemetry |
@@ -43,10 +43,11 @@ If you want 200 features, use Raycast. If you want iCloud sync, use Paste. If yo
 
 ## Features
 
-- **⚡ Instant popup** — press `⌥V` from any app, your clipboard history appears at the cursor
+- **⚡ Instant popup** — press `⇧⌘V` from any app; the popup opens beside the text caret (above, below, left or right — whichever has room)
+- **⌘V stays a normal paste** — the clipboard is never rewritten, so rich text and full-resolution images keep their fidelity
 - **🖼 Text & images** — captures plain text, screenshots, images from Finder, browsers, Preview
-- **🔍 Search** — type to filter instantly; searches content and source app name
-- **📌 Pin favourites** — pinned items float to the top and are never evicted by newer copies
+- **🔍 Search** — type to filter instantly; searches content and source app name, CJK input methods included
+- **⌃⌘V one by one, ⌃⌥⌘V all at once** — walk the history in order, or paste everything in a single run
 - **🔐 Encrypted history** — disk storage is AES-256-GCM encrypted; the key lives in your Keychain, never on disk
 - **🔒 Sensitive data protection** — items marked by password managers (`org.nspasteboard.ConcealedType`) are automatically skipped before recording
 - **🚫 Per-app exclusions** — block any app from being recorded; changes from excluded apps are silently ignored
@@ -62,12 +63,16 @@ If you want 200 features, use Raycast. If you want iCloud sync, use Paste. If yo
 
 1. [**Download ClipHistory.dmg**](https://github.com/weiykong/ClipHistory/releases/latest/download/ClipHistory.dmg)
 2. Open the DMG and drag **ClipHistory.app** to `/Applications`
-3. **Unlock the app (one-time)** — macOS blocks apps without an Apple certificate. Open Terminal and run:
+3. **Verify the download** (recommended) — the release ships a checksum:
+   ```bash
+   shasum -a 256 -c ClipHistory.dmg.sha256
+   ```
+4. **Unlock the app (one-time)** — macOS blocks apps without an Apple certificate. Open Terminal and run:
    ```bash
    xattr -d com.apple.quarantine /Applications/ClipHistory.app
    ```
    Then double-click ClipHistory to open it normally.
-4. Grant **Accessibility** permission when the onboarding screen asks
+5. Grant **Accessibility** permission when the onboarding screen asks
 
 **Requires macOS 14 Sonoma or later.**
 
@@ -85,16 +90,34 @@ Requires Xcode Command Line Tools: `xcode-select --install`
 
 ## Usage
 
+The list runs oldest → newest: the earliest clip sits at the top, your latest copy at the bottom.
+
 | Action | Shortcut |
 |---|---|
-| Open popup | `⌥V` *(customisable in Settings)* |
+| Open popup at the text cursor | `⇧⌘V` *(customisable in Settings)* |
+| Paste the latest clip | `⌘V` *(customisable in Settings)* |
+| Paste clips one by one (oldest first, one per press) | `⌃⌘V` *(customisable in Settings)* |
+| Paste everything in one go | `⌃⌥⌘V` *(customisable in Settings)* |
 | Navigate | `↑` / `↓` |
 | Paste selected | `↵` |
-| Search | Click the search bar, then type |
-| Pin / unpin item | Click the `pin` icon on the row |
+| Search | Just type — no field to click |
+| Delete an item | Click the `trash` icon on the row |
 | Hide images | `photo` toggle in the popup header |
 | Close | `Esc` or click outside |
 | Settings | Menu bar icon → **Settings…** |
+
+Paste-all joins consecutive text clips into a single paste, end to end with no
+separator (images still go one by one, since the pasteboard carries one
+representation per paste). Paste-one-by-one stops at the newest clip instead of
+wrapping back to the oldest. The popup opens above, below, right or left of the
+caret — whichever side has room — with a 10 pt clearance, so it never covers the
+insertion point.
+
+Search accepts CJK input: keystrokes reach the system input method through an
+`NSTextInputClient` bridge, so pinyin/Japanese/Korean composition works even
+though the popup never takes focus from the app you're pasting into.
+
+The app follows your system language (English / Simplified Chinese).
 
 ---
 
@@ -105,16 +128,22 @@ Zero dependencies. Swift Package Manager executable target.
 ```
 Sources/ClipHistory/
 ├── main.swift                  # NSApplication entry point
+├── AppTheme.swift              # Shared radii / fills
 ├── AppDelegate.swift           # Menu bar, hotkey, clipboard polling timer
 ├── AppSettings.swift           # @Observable settings + UserDefaults persistence
 ├── ClipboardStore.swift        # Item store, polling, AES-256-GCM encryption, PNG thumbnailing
 ├── PopupWindowController.swift # NSPanel + CGEventTap keyboard intercept
+├── IMESearchBridge.swift       # NSTextInputClient so search accepts CJK input
 ├── PopupView.swift             # SwiftUI popup UI
 ├── PopupState.swift            # Shared search / selection state
 ├── SettingsView.swift          # SwiftUI settings window
 ├── OnboardingView.swift        # First-launch setup guide
-├── HotkeyShortcut.swift        # Hotkey model + Carbon registration
+├── HotkeyShortcut.swift        # Hotkey model (Carbon registration lives in AppDelegate)
 ├── HotkeyRecorderView.swift    # NSViewRepresentable hotkey recorder
+├── CaretLocator.swift          # Accessibility caret lookup for popup placement
+├── PopupPlacement.swift        # Pure geometry: pick above/below/left/right of the caret
+├── Localization.swift          # en / zh-Hans string table driven by system language
+├── UpdateChecker.swift         # GitHub releases check
 └── MenuBarIcon.swift           # Programmatic SF Symbol menu bar icon
 ```
 
