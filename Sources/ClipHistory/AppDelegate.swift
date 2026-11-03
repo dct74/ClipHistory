@@ -68,6 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private var lastFrontmostSource: SourceApp?   // updated on every app-switch
     private var lastPasteboardChangeCount = NSPasteboard.general.changeCount
     private var visibilityObservation: NSKeyValueObservation?
+    private var suppressVisibilitySync = false
 
     private static let popupHotkeyID:     UInt32 = 1
     private static let pasteLatestHotkeyID: UInt32 = 2
@@ -159,22 +160,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private func observeStatusItemVisibility() {
         guard let statusItem else { return }
 
-        // The system persists a hidden state per autosave name — including one
-        // recorded before the item became removable. Apply our own preference on
-        // launch so the icon (the only route into Settings) can't get stuck
-        // invisible; hide/show changes are written back through KVO below.
-
         visibilityObservation = statusItem.observe(\.isVisible, options: [.new]) { [weak self] item, _ in
             DispatchQueue.main.async {
-                guard let self else { return }
+                guard let self, !self.suppressVisibilitySync else { return }
                 if self.settings.showMenuBarIcon != item.isVisible {
                     self.settings.showMenuBarIcon = item.isVisible
                 }
             }
         }
-        settings.showMenuBarIcon = statusItem.isVisible
+        // Do not seed the preference from the item's launch state: the item is
+        // always created visible, which would overwrite a stored "hidden".
         settings.onShowMenuBarIconChanged = { [weak self] visible in
-            self?.statusItem?.isVisible = visible
+            self?.applyMenuBarIconVisibility(visible)
+        }
+
+        // Setting isVisible while the item is still being placed in the status
+        // bar is ignored (the bar re-adds it as visible). Apply the stored
+        // preference once the launch turn is over, and read it back to be sure.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            guard let self else { return }
+            self.applyMenuBarIconVisibility(self.settings.showMenuBarIcon)
+            diagLog("menubar: applied pref=\(self.settings.showMenuBarIcon) -> visible=\(self.statusItem?.isVisible == true)")
+        }
+    }
+
+    /// Applies a visibility request and ignores the KVO echo it produces, so the
+    /// stored preference can't be overwritten by the value we just set.
+    private func applyMenuBarIconVisibility(_ visible: Bool) {
+        guard let statusItem, statusItem.isVisible != visible else { return }
+        suppressVisibilitySync = true
+        statusItem.isVisible = visible
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            self?.suppressVisibilitySync = false
         }
     }
 
