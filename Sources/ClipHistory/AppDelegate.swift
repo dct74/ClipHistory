@@ -3,23 +3,6 @@ import Carbon.HIToolbox
 import SwiftUI
 
 
-// MARK: - Diagnostic log (temporary)
-
-private func diagLog(_ message: String) {
-    let dir = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Logs/ClipHistory", isDirectory: true)
-    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    let url = dir.appendingPathComponent("diag.log")
-    let stamp = ISO8601DateFormatter().string(from: Date())
-    let line = "\(stamp) [\(getpid())] \(message)\n"
-    if let handle = try? FileHandle(forWritingTo: url) {
-        handle.seekToEndOfFile()
-        handle.write(Data(line.utf8))
-        try? handle.close()
-    } else {
-        try? Data(line.utf8).write(to: url)
-    }
-}
 
 private func clipHistoryHotkeyHandler(
     _ nextHandler: EventHandlerCallRef?,
@@ -78,16 +61,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        diagLog("launch: begin")
         NSApp.setActivationPolicy(.accessory)
 
         settings      = AppSettings()
-        diagLog("launch: settings ok")
         store         = ClipboardStore(maxCount: settings.maxItems)
-        diagLog("launch: store ok (key read)")
         updateChecker = UpdateChecker()
         popup         = PopupWindowController(store: store, settings: settings, updateChecker: updateChecker)
-        diagLog("launch: popup controller ok")
 
         // Wire setting-change callbacks
         settings.onHotkeysChanged  = { [weak self] in self?.reRegisterHotkeys() }
@@ -101,7 +80,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         showOnboardingIfNeeded()
 
         // Check for updates on every launch
-        diagLog("launch: done, axTrusted=\(AXIsProcessTrusted())")
         updateChecker.checkForUpdate()
     }
 
