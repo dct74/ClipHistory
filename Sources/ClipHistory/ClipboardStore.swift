@@ -1,5 +1,6 @@
 import AppKit
 import CryptoKit
+import LocalAuthentication
 import Observation
 import Security
 
@@ -394,41 +395,100 @@ final class ClipboardStore {
         try? FileManager.default.moveItem(at: saveURL, to: aside)
     }
 
-    // MARK: - Keychain key management
+    // MARK: - Encryption key
 
     private static let keychainService = "com.weiyuankong.cliphistory"
     private static let keychainAccount = "history-encryption-key"
 
+    /// `~/Library/Application Support/ClipHistory/encryption.key`, mode 0600.
+    private static var keyFileURL: URL {
+        FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("ClipHistory", isDirectory: true)
+            .appendingPathComponent("encryption.key")
+    }
+
+    /// The key lives in a 0600 file, with the Keychain as a *migration source*
+    /// only.
+    ///
+    /// Every build of this app is ad-hoc signed, so each release has a different
+    /// code identity. A Keychain item created by one build prompts for
+    /// authorisation in the next one — and because this is a menu bar app with no
+    /// window, that prompt is invisible: the app simply hangs at launch and never
+    /// creates its status item. Reading the Keychain with UI disabled and keeping
+    /// the key in a file next to the (equally readable) history removes both the
+    /// hang and the history loss on upgrade.
     private static func loadOrCreateKey() -> SymmetricKey {
+        if let data = try? Data(contentsOf: keyFileURL), data.count == 32 {
+            return SymmetricKey(data: data)
+        }
+
+        // One-time migration from builds that stored the key in the Keychain.
+        if let existing = existingKeychainKey() {
+            writeKeyFile(existing)
+            return existing
+        }
+
+        let key = SymmetricKey(size: .bits256)
+        writeKeyFile(key)
+        storeInKeychain(key)          // best effort, never blocks
+        return key
+    }
+
+    /// Reads the Keychain copy without ever showing UI, so a differently signed
+    /// build fails fast instead of hanging.
+    private static func existingKeychainKey() -> SymmetricKey? {
+        let query: [CFString: Any] = [
+            kSecClass:                     kSecClassGenericPassword,
+            kSecAttrService:               keychainService,
+            kSecAttrAccount:               keychainAccount,
+            kSecReturnData:                true,
+            kSecUseAuthenticationContext:  noInteractionContext(),
+        ]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data, data.count == 32 else { return nil }
+        return SymmetricKey(data: data)
+    }
+
+    private static func storeInKeychain(_ key: SymmetricKey) {
+        let keyData = key.withUnsafeBytes { Data($0) }
         let query: [CFString: Any] = [
             kSecClass:       kSecClassGenericPassword,
             kSecAttrService: keychainService,
             kSecAttrAccount: keychainAccount,
-            kSecReturnData:  true,
         ]
-        var result: CFTypeRef?
-        if SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-           let data = result as? Data, data.count == 32 {
-            return SymmetricKey(data: data)
-        }
-
-        // Generate a fresh 256-bit key and store it
-        let key     = SymmetricKey(size: .bits256)
-        let keyData = key.withUnsafeBytes { Data($0) }
         let add: [CFString: Any] = [
-            kSecClass:            kSecClassGenericPassword,
-            kSecAttrService:      keychainService,
-            kSecAttrAccount:      keychainAccount,
-            kSecValueData:        keyData,
-            kSecAttrAccessible:   kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+            kSecClass:           kSecClassGenericPassword,
+            kSecAttrService:     keychainService,
+            kSecAttrAccount:     keychainAccount,
+            kSecValueData:       keyData,
+            kSecAttrAccessible:  kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+            kSecUseAuthenticationContext: noInteractionContext(),
         ]
-        // Delete stale entry (wrong size) before inserting
         SecItemDelete(query as CFDictionary)
         let status = SecItemAdd(add as CFDictionary, nil)
         if status != errSecSuccess {
-            NSLog("ClipHistory: could not store encryption key: \(status)")
+            NSLog("ClipHistory: keychain copy not stored: \(status)")
         }
-        return key
+    }
+
+    /// An authentication context that must never put UI on screen — an invisible
+    /// modal prompt is what used to hang the app at launch.
+    private static func noInteractionContext() -> LAContext {
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        return context
+    }
+
+    private static func writeKeyFile(_ key: SymmetricKey) {
+        let data = key.withUnsafeBytes { Data($0) }
+        let url = keyFileURL
+        let attributes: [FileAttributeKey: Any] = [.posixPermissions: 0o600]
+        if !FileManager.default.createFile(atPath: url.path, contents: data, attributes: attributes) {
+            try? data.write(to: url, options: [.atomic, .completeFileProtection])
+            try? FileManager.default.setAttributes(attributes, ofItemAtPath: url.path)
+        }
     }
 }
 

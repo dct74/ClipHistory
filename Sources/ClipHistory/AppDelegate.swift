@@ -94,12 +94,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private func setupMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem?.button?.image = .clipHistoryMenuBar()
+        // The system's Menu Bar settings can only hide an item that opts into
+        // removal; a stable autosave name is what the choice is persisted under.
+        statusItem?.autosaveName = "ClipHistoryMenuBarItem"
+        statusItem?.behavior = [.removalAllowed]
         // The system's Menu Bar settings can only hide an item whose behavior
         // allows removal; the identity comes from a stable autosave name, which
         // is also what the system persists the user's choice under.
-        statusItem?.autosaveName = "ClipHistoryStatusItem"
-        statusItem?.behavior = [.removalAllowed]
-        observeStatusItemVisibility()
 
         let menu = NSMenu()
         menu.delegate = self
@@ -118,12 +119,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                                 action: #selector(quit),
                                 keyEquivalent: "q"))
         statusItem?.menu = menu
+        observeStatusItemVisibility()
     }
 
     /// Keeps the Settings toggle in step with the system's Menu Bar settings and
     /// carries the app's own re-add action back into the status item.
     private func observeStatusItemVisibility() {
         guard let statusItem else { return }
+
+        // The system persists a hidden state per autosave name — including one
+        // recorded before the item became removable. Apply our own preference on
+        // launch so the icon (the only route into Settings) can't get stuck
+        // invisible; hide/show changes are written back through KVO below.
+
         visibilityObservation = statusItem.observe(\.isVisible, options: [.new]) { [weak self] item, _ in
             DispatchQueue.main.async {
                 guard let self else { return }

@@ -62,6 +62,7 @@ final class AppSettings {
     var showMenuBarIcon: Bool = true {
         didSet {
             guard showMenuBarIcon != oldValue else { return }
+            save()
             onShowMenuBarIconChanged?(showMenuBarIcon)
         }
     }
@@ -95,6 +96,7 @@ final class AppSettings {
         static let pasteLatestHotkey      = "pasteLatestHotkey"
         static let pasteNextHotkey        = "pasteNextHotkey"
         static let pasteAllHotkey         = "pasteAllHotkey"
+        static let showMenuBarIcon        = "showMenuBarIcon"
         static let maxItems               = "maxItems"
         static let hideImages             = "hideImages"
         static let rememberScrollPosition = "rememberScrollPosition"
@@ -122,6 +124,11 @@ final class AppSettings {
 
         hideImages = d.bool(forKey: Keys.hideImages)
         rememberScrollPosition = d.bool(forKey: Keys.rememberScrollPosition)
+        // Persisted so a stale "hidden" record from the system's Menu Bar
+        // settings can be overridden on the next launch.
+        if d.object(forKey: Keys.showMenuBarIcon) != nil {
+            showMenuBarIcon = d.bool(forKey: Keys.showMenuBarIcon)
+        }
         if let ids = d.stringArray(forKey: Keys.excludedBundleIDs) {
             excludedBundleIDs = Set(ids)
         }
@@ -150,6 +157,7 @@ final class AppSettings {
         Self.store(pasteNextHotkey, key: Keys.pasteNextHotkey, into: d)
         Self.store(pasteAllHotkey,  key: Keys.pasteAllHotkey,  into: d)
         d.set(maxItems,                 forKey: Keys.maxItems)
+        d.set(showMenuBarIcon,          forKey: Keys.showMenuBarIcon)
         d.set(hideImages,               forKey: Keys.hideImages)
         d.set(rememberScrollPosition,   forKey: Keys.rememberScrollPosition)
         d.set(Array(excludedBundleIDs), forKey: Keys.excludedBundleIDs)
