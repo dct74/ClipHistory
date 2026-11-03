@@ -57,6 +57,17 @@ final class AppSettings {
 
     // MARK: - Callbacks (set by AppDelegate)
 
+    /// Mirrors `NSStatusItem.isVisible`: the system's own Menu Bar settings can
+    /// hide the icon, and the app must offer a way to bring it back.
+    var showMenuBarIcon: Bool = true {
+        didSet {
+            guard showMenuBarIcon != oldValue else { return }
+            onShowMenuBarIconChanged?(showMenuBarIcon)
+        }
+    }
+
+    var onShowMenuBarIconChanged: ((Bool) -> Void)?
+
     /// Shortcuts the system refused to register (conflict with another app, or
     /// the same combo bound twice). Shown as a warning in Settings.
     var unavailableHotkeys: Set<String> = []

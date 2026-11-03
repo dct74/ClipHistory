@@ -48,6 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private var clipboardTimer:      Timer?
     private var lastFrontmostSource: SourceApp?   // updated on every app-switch
     private var lastPasteboardChangeCount = NSPasteboard.general.changeCount
+    private var visibilityObservation: NSKeyValueObservation?
 
     private static let popupHotkeyID:     UInt32 = 1
     private static let pasteLatestHotkeyID: UInt32 = 2
@@ -93,6 +94,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private func setupMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem?.button?.image = .clipHistoryMenuBar()
+        // The system's Menu Bar settings can only hide an item whose behavior
+        // allows removal; the identity comes from a stable autosave name, which
+        // is also what the system persists the user's choice under.
+        statusItem?.autosaveName = "ClipHistoryStatusItem"
+        statusItem?.behavior = [.removalAllowed]
+        observeStatusItemVisibility()
 
         let menu = NSMenu()
         menu.delegate = self
@@ -111,6 +118,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                                 action: #selector(quit),
                                 keyEquivalent: "q"))
         statusItem?.menu = menu
+    }
+
+    /// Keeps the Settings toggle in step with the system's Menu Bar settings and
+    /// carries the app's own re-add action back into the status item.
+    private func observeStatusItemVisibility() {
+        guard let statusItem else { return }
+        visibilityObservation = statusItem.observe(\.isVisible, options: [.new]) { [weak self] item, _ in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if self.settings.showMenuBarIcon != item.isVisible {
+                    self.settings.showMenuBarIcon = item.isVisible
+                }
+            }
+        }
+        settings.showMenuBarIcon = statusItem.isVisible
+        settings.onShowMenuBarIconChanged = { [weak self] visible in
+            self?.statusItem?.isVisible = visible
+        }
     }
 
     /// Refresh the hint line right before the menu opens (hotkey might have changed)

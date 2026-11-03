@@ -28,6 +28,9 @@ struct PopupView: View {
             if updateChecker.updateAvailable {
                 updateBanner
             }
+            if !settings.showMenuBarIcon {
+                menuBarHiddenBanner
+            }
             itemList
                 .onContinuousHover { phase in
                     guard case .active(let pt) = phase else { return }
@@ -42,12 +45,21 @@ struct PopupView: View {
                 }
             hintsBar
         }
+        // Measured against a real NSMenu on this system: the menu draws an
+        // opaque system background (#FFFEFF light), not a vibrancy material —
+        // `.menu`/`.ultraThinMaterial` both render greyer than a menu does.
+        // The semantic colour follows the system light/dark appearance, and the
+        // scroll indicator sits on the same surface. The drop shadow is the
+        // window's own (see buildPanel).
         .background {
             RoundedRectangle(cornerRadius: AppTheme.panelRadius)
-                .fill(.ultraThinMaterial)
-                .shadow(color: .black.opacity(0.12), radius: 32, y: 16)
+                .fill(Color(nsColor: .windowBackgroundColor))
         }
         .clipShape(RoundedRectangle(cornerRadius: AppTheme.panelRadius))
+        .overlay {
+            RoundedRectangle(cornerRadius: AppTheme.panelRadius)
+                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.45), lineWidth: 0.5)
+        }
         .overlay {
             if let confirmation = state.confirmation {
                 confirmationCard(confirmation)
@@ -171,6 +183,32 @@ struct PopupView: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .background(Color.green.opacity(0.06))
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// The icon is the only way into Settings, so a hidden one has to be
+    /// restorable from the popup — which the global hotkey still opens.
+    private var menuBarHiddenBanner: some View {
+        Button { settings.showMenuBarIcon = true } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "menubar.rectangle")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.secondary)
+                Text(L10n.s("Menu bar icon is hidden", "菜单栏图标已隐藏"))
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.primary.opacity(0.75))
+                Spacer()
+                Text(L10n.s("Show again", "重新显示"))
+                    .font(.system(size: 10, weight: .black, design: .rounded))
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.accentColor.opacity(0.1), in: Capsule())
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(Color.primary.opacity(0.04))
         }
         .buttonStyle(.plain)
     }

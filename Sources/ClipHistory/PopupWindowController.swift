@@ -297,7 +297,8 @@ final class PopupWindowController {
         p.hidesOnDeactivate  = false
         p.backgroundColor    = .clear
         p.isOpaque           = false
-        p.hasShadow          = false  // Shadow drawn via SwiftUI .shadow() modifier so it follows the rounded shape
+        p.hasShadow          = true   // the standard macOS menu/popover drop shadow
+        p.appearance         = nil    // follow the system light/dark appearance
 
         p.contentView = NSHostingView(rootView: PopupView(
             store:         store,

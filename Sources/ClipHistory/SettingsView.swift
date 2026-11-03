@@ -115,6 +115,18 @@ struct SettingsView: View {
                     .toggleStyle(.switch)
                     .labelsHidden()
             }
+
+            Divider().padding(.horizontal, 16).opacity(0.5)
+
+            SettingsRow(icon: "menubar.rectangle",
+                        iconColor: .accentColor,
+                        label: L10n.s("Show in Menu Bar", "在菜单栏显示图标"),
+                        hint: L10n.s("The system's Menu Bar settings can hide it too — reopen the popup to bring it back.",
+                                     "系统设置的菜单栏面板也可以隐藏它；重新打开面板即可找回。")) {
+                Toggle("", isOn: $settings.showMenuBarIcon)
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+            }
         }
     }
 

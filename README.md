@@ -120,6 +120,7 @@ The list runs oldest → newest: the earliest clip sits at the top, your latest 
 | Hide images | `photo` toggle in the popup header |
 | Close | `Esc` or click outside |
 | Settings | Menu bar icon → **Settings…** |
+| Hide the menu bar icon | System Settings → Menu Bar, or Settings → **Show in Menu Bar** (reopen the popup to bring it back) |
 
 Paste-all joins consecutive text clips into a single paste, end to end with no
 separator (images still go one by one, since the pasteboard carries one
