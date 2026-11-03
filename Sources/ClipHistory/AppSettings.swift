@@ -57,8 +57,9 @@ final class AppSettings {
 
     // MARK: - Callbacks (set by AppDelegate)
 
-    /// Mirrors `NSStatusItem.isVisible`: the system's own Menu Bar settings can
-    /// hide the icon, and the app must offer a way to bring it back.
+    /// Whether the menu bar icon is shown. The system's Menu Bar pane cannot
+    /// manage an ad-hoc signed item reliably (it registers by binary path), so
+    /// the app owns this setting.
     var showMenuBarIcon: Bool = true {
         didSet {
             guard showMenuBarIcon != oldValue else { return }
@@ -124,8 +125,6 @@ final class AppSettings {
 
         hideImages = d.bool(forKey: Keys.hideImages)
         rememberScrollPosition = d.bool(forKey: Keys.rememberScrollPosition)
-        // Persisted so a stale "hidden" record from the system's Menu Bar
-        // settings can be overridden on the next launch.
         if d.object(forKey: Keys.showMenuBarIcon) != nil {
             showMenuBarIcon = d.bool(forKey: Keys.showMenuBarIcon)
         }

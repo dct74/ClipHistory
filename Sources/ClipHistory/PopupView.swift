@@ -137,6 +137,7 @@ struct PopupView: View {
                     }
                     .buttonStyle(.plain)
                     .help(L10n.s("Clear History", "清空历史"))
+
                 }
             }
 
@@ -187,8 +188,8 @@ struct PopupView: View {
         .buttonStyle(.plain)
     }
 
-    /// The icon is the only way into Settings, so a hidden one has to be
-    /// restorable from the popup — which the global hotkey still opens.
+    /// The icon is the usual route into Settings, so a hidden one has to be
+    /// restorable from the popup — the global hotkey still opens it.
     private var menuBarHiddenBanner: some View {
         Button { settings.showMenuBarIcon = true } label: {
             HStack(spacing: 8) {

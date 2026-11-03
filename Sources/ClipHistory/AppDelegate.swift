@@ -82,7 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         NSApp.setActivationPolicy(.accessory)
 
         settings      = AppSettings()
-        diagLog("launch: settings ok, showMenuBarIcon=\(settings.showMenuBarIcon)")
+        diagLog("launch: settings ok")
         store         = ClipboardStore(maxCount: settings.maxItems)
         diagLog("launch: store ok (key read)")
         updateChecker = UpdateChecker()
@@ -119,14 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private func setupMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem?.button?.image = .clipHistoryMenuBar()
-        diagLog("menubar: created item button=\(statusItem?.button == nil ? "nil" : "ok") visible=\(statusItem?.isVisible == true)")
-        // The system's Menu Bar settings can only hide an item that opts into
-        // removal; a stable autosave name is what the choice is persisted under.
         statusItem?.autosaveName = "ClipHistoryMenuBarItem"
-        statusItem?.behavior = [.removalAllowed]
-        // The system's Menu Bar settings can only hide an item whose behavior
-        // allows removal; the identity comes from a stable autosave name, which
-        // is also what the system persists the user's choice under.
 
         let menu = NSMenu()
         menu.delegate = self
@@ -140,23 +133,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         menu.addItem(NSMenuItem(title: L10n.s("Settings…", "设置…"),
                                 action: #selector(openSettings),
                                 keyEquivalent: ","))
-        menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: L10n.s("Quit", "退出"),
                                 action: #selector(quit),
                                 keyEquivalent: "q"))
         statusItem?.menu = menu
-        diagLog("menubar: autosave=\(statusItem?.autosaveName as String? ?? "nil") behavior=\(statusItem?.behavior.rawValue ?? 0)")
+
         observeStatusItemVisibility()
-        let item = statusItem
-        for delay in [0.5, 2.0, 5.0] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                diagLog("check +\(delay)s: visible=\(item?.isVisible == true) img=\(item?.button?.image == nil ? "nil" : "ok") win=\(item?.button?.window == nil ? "nil" : "ok") axTrusted=\(AXIsProcessTrusted())")
-            }
-        }
     }
 
-    /// Keeps the Settings toggle in step with the system's Menu Bar settings and
-    /// carries the app's own re-add action back into the status item.
+    /// The app owns icon visibility. The system's Menu Bar pane registers
+    /// ad-hoc-signed items by binary path, so its switch can't be relied on
+    /// (it targets stale paths and only applies at next launch) — hence no
+    /// `removalAllowed` and no expanded-interface session.
     private func observeStatusItemVisibility() {
         guard let statusItem else { return }
 
@@ -168,19 +156,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                 }
             }
         }
-        // Do not seed the preference from the item's launch state: the item is
-        // always created visible, which would overwrite a stored "hidden".
         settings.onShowMenuBarIconChanged = { [weak self] visible in
             self?.applyMenuBarIconVisibility(visible)
         }
 
-        // Setting isVisible while the item is still being placed in the status
-        // bar is ignored (the bar re-adds it as visible). Apply the stored
-        // preference once the launch turn is over, and read it back to be sure.
+        // isVisible is ignored while the item is still being placed in the bar,
+        // so the stored preference is applied one run-loop turn later.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
             guard let self else { return }
             self.applyMenuBarIconVisibility(self.settings.showMenuBarIcon)
-            diagLog("menubar: applied pref=\(self.settings.showMenuBarIcon) -> visible=\(self.statusItem?.isVisible == true)")
         }
     }
 
@@ -194,6 +178,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             self?.suppressVisibilitySync = false
         }
     }
+
+    private func showPopupFromStatusItem() {
+        guard let button = statusItem?.button, let window = button.window else { return }
+        let rect = window.convertToScreen(button.convert(button.bounds, to: nil))
+        popup.show(near: rect)
+    }
+
+    /// Keeps the Settings toggle in step with the system's Menu Bar settings and
+    /// carries the app's own re-add action back into the status item.
+
+    /// Applies a visibility request and ignores the KVO echo it produces, so the
+    /// stored preference can't be overwritten by the value we just set.
 
     /// Refresh the hint line right before the menu opens (hotkey might have changed)
     func menuWillOpen(_ menu: NSMenu) {
