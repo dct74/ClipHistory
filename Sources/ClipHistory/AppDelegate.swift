@@ -139,17 +139,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
 
         // isVisible is ignored while the item is still being placed in the bar,
-        // so the stored preference is applied one run-loop turn later.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-            guard let self else { return }
-            self.applyMenuBarIconVisibility(self.settings.showMenuBarIcon)
+        // and the status bar may re-apply its own persisted state afterwards
+        // (it records ad-hoc items by binary path, which goes stale on every
+        // rebuild). Our setting is the source of truth, so re-assert it a few
+        // times until it sticks.
+        for delay in [0.2, 1.0, 2.5] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self else { return }
+                self.applyMenuBarIconVisibility(self.settings.showMenuBarIcon, force: true)
+            }
         }
     }
 
     /// Applies a visibility request and ignores the KVO echo it produces, so the
     /// stored preference can't be overwritten by the value we just set.
-    private func applyMenuBarIconVisibility(_ visible: Bool) {
-        guard let statusItem, statusItem.isVisible != visible else { return }
+    private func applyMenuBarIconVisibility(_ visible: Bool, force: Bool = false) {
+        guard let statusItem else { return }
+        guard force || statusItem.isVisible != visible else { return }
         suppressVisibilitySync = true
         statusItem.isVisible = visible
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in

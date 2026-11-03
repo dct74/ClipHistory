@@ -120,7 +120,7 @@ The list runs oldest → newest: the earliest clip sits at the top, your latest 
 | Hide images | `photo` toggle in the popup header |
 | Close | `Esc` or click outside |
 | Settings | Menu bar icon → **Settings…** |
-| Hide the menu bar icon | System Settings → Menu Bar, or Settings → **Show in Menu Bar** (reopen the popup to bring it back) |
+| Hide the menu bar icon | Settings → **Show in Menu Bar** (immediate; reopen the popup to bring it back) |
 
 Paste-all joins consecutive text clips into a single paste, end to end with no
 separator (images still go one by one, since the pasteboard carries one
@@ -132,6 +132,11 @@ insertion point.
 Search accepts CJK input: keystrokes reach the system input method through an
 `NSTextInputClient` bridge, so pinyin/Japanese/Korean composition works even
 though the popup never takes focus from the app you're pasting into.
+
+The menu bar icon has two switches, and they apply at different times: the app's own
+*Show in Menu Bar* setting takes effect immediately, while the identically named switch in
+**System Settings → Menu Bar** is applied by macOS at the next launch (it records ad-hoc-signed
+items by binary path, so its state can go stale after a rebuild).
 
 The app follows your system language (English / Simplified Chinese).
 

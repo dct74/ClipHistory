@@ -121,8 +121,8 @@ struct SettingsView: View {
             SettingsRow(icon: "menubar.rectangle",
                         iconColor: .accentColor,
                         label: L10n.s("Show in Menu Bar", "在菜单栏显示图标"),
-                        hint: L10n.s("Turn off to hide the icon; reopen the popup to bring it back.",
-                                     "关掉可隐藏图标；再次打开面板即可恢复。")) {
+                        hint: L10n.s("Takes effect immediately. The switch with the same name in System Settings → Menu Bar only applies at the next launch.",
+                                     "立即生效。系统设置 → 菜单栏里同名的开关要下次启动才生效。")) {
                 Toggle("", isOn: $settings.showMenuBarIcon)
                     .toggleStyle(.switch)
                     .labelsHidden()
