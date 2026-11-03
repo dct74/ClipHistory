@@ -2,6 +2,25 @@ import AppKit
 import Carbon.HIToolbox
 import SwiftUI
 
+
+// MARK: - Diagnostic log (temporary)
+
+private func diagLog(_ message: String) {
+    let dir = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Logs/ClipHistory", isDirectory: true)
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let url = dir.appendingPathComponent("diag.log")
+    let stamp = ISO8601DateFormatter().string(from: Date())
+    let line = "\(stamp) [\(getpid())] \(message)\n"
+    if let handle = try? FileHandle(forWritingTo: url) {
+        handle.seekToEndOfFile()
+        handle.write(Data(line.utf8))
+        try? handle.close()
+    } else {
+        try? Data(line.utf8).write(to: url)
+    }
+}
+
 private func clipHistoryHotkeyHandler(
     _ nextHandler: EventHandlerCallRef?,
     _ event: EventRef?,
@@ -58,12 +77,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        diagLog("launch: begin")
         NSApp.setActivationPolicy(.accessory)
 
         settings      = AppSettings()
+        diagLog("launch: settings ok, showMenuBarIcon=\(settings.showMenuBarIcon)")
         store         = ClipboardStore(maxCount: settings.maxItems)
+        diagLog("launch: store ok (key read)")
         updateChecker = UpdateChecker()
         popup         = PopupWindowController(store: store, settings: settings, updateChecker: updateChecker)
+        diagLog("launch: popup controller ok")
 
         // Wire setting-change callbacks
         settings.onHotkeysChanged  = { [weak self] in self?.reRegisterHotkeys() }
@@ -77,6 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         showOnboardingIfNeeded()
 
         // Check for updates on every launch
+        diagLog("launch: done, axTrusted=\(AXIsProcessTrusted())")
         updateChecker.checkForUpdate()
     }
 
@@ -94,6 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private func setupMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem?.button?.image = .clipHistoryMenuBar()
+        diagLog("menubar: created item button=\(statusItem?.button == nil ? "nil" : "ok") visible=\(statusItem?.isVisible == true)")
         // The system's Menu Bar settings can only hide an item that opts into
         // removal; a stable autosave name is what the choice is persisted under.
         statusItem?.autosaveName = "ClipHistoryMenuBarItem"
@@ -119,7 +144,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                                 action: #selector(quit),
                                 keyEquivalent: "q"))
         statusItem?.menu = menu
+        diagLog("menubar: autosave=\(statusItem?.autosaveName as String? ?? "nil") behavior=\(statusItem?.behavior.rawValue ?? 0)")
         observeStatusItemVisibility()
+        let item = statusItem
+        for delay in [0.5, 2.0, 5.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                diagLog("check +\(delay)s: visible=\(item?.isVisible == true) img=\(item?.button?.image == nil ? "nil" : "ok") win=\(item?.button?.window == nil ? "nil" : "ok") axTrusted=\(AXIsProcessTrusted())")
+            }
+        }
     }
 
     /// Keeps the Settings toggle in step with the system's Menu Bar settings and
