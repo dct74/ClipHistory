@@ -168,7 +168,9 @@ final class ClipboardStore {
         self.maxCount      = maxCount
         self.encryptionKey = ClipboardStore.loadOrCreateKey()
         imageCache.countLimit = maxCount * 2
-        imageCache.totalCostLimit = 64 * 1024 * 1024   // decoded images, ~480 px each
+        // Cost must be the *decoded* size — a 480 px PNG is ~100 KB on disk but
+        // ~0.9 MB once inflated, so byte-counting the PNG under-reported by ~9x.
+        imageCache.totalCostLimit = 24 * 1024 * 1024
         load()
     }
 
@@ -179,8 +181,15 @@ final class ClipboardStore {
         if let hit = imageCache.object(forKey: key) { return hit }
         guard case .image(let data) = item.content,
               let img = NSImage(data: data) else { return nil }
-        imageCache.setObject(img, forKey: key, cost: data.count)
+        let pixels = img.representations.reduce(0) { $0 + $1.pixelsWide * $1.pixelsHigh }
+        imageCache.setObject(img, forKey: key, cost: max(pixels, 1) * 4)
         return img
+    }
+
+    /// Drops decoded images while the popup is closed — they are only needed to
+    /// draw rows, and NSCache would otherwise keep them for the whole session.
+    func releaseDecodedImages() {
+        imageCache.removeAllObjects()
     }
 
     /// Records the pasteboard generation of a write we just performed, so the
@@ -306,12 +315,14 @@ final class ClipboardStore {
 
     private func flushSave() {
         pendingSave = nil
-        guard let plain = try? JSONEncoder().encode(items) else { return }
+        // Hand the array (copy-on-write) to the save queue and encode there: with
+        // images in the history the encoded blob is the biggest allocation of a
+        // save, and it has no business on the main thread.
+        let snapshot = items
         let key = encryptionKey
         let url = saveURL
-        // Snapshot on the main thread, then encrypt + write off it so a large
-        // history never hitches the popup mid-animation.
         ClipboardStore.saveQueue.async {
+            guard let plain = try? JSONEncoder().encode(snapshot) else { return }
             ClipboardStore.write(plain, key: key, to: url)
         }
     }
@@ -321,7 +332,7 @@ final class ClipboardStore {
     func flushNow() {
         pendingSave?.cancel()
         pendingSave = nil
-        guard let plain = try? JSONEncoder().encode(items) else { return }
+        guard let plain = try? JSONEncoder().encode(items) else { return }   // must finish before exit
         let key = encryptionKey
         let url = saveURL
         _ = ClipboardStore.saveQueue.sync {

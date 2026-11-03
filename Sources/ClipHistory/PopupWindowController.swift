@@ -102,6 +102,8 @@ final class PopupWindowController {
         stopEventTap()
         removeClickMonitor()
         imeBridge.cancelComposition()
+        // Decoded thumbnails are only needed while rows are on screen.
+        store.releaseDecodedImages()
         panel?.orderOut(nil)
         // No focus restoration needed — App A never lost focus.
     }
