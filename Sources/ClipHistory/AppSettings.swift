@@ -3,6 +3,7 @@ import AppKit
 import Observation
 import ServiceManagement
 
+
 @Observable
 final class AppSettings {
 
