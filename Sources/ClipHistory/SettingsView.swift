@@ -6,6 +6,7 @@ struct SettingsView: View {
     let store:    ClipboardStore
     var onReopenOnboarding: (() -> Void)?
 
+    @Environment(\.colorScheme) private var colorScheme
     @State private var showClearAlert = false
 
     private var knownSourceApps: [SourceApp] {
@@ -34,7 +35,7 @@ struct SettingsView: View {
         }
         .frame(width: 480, height: 700)
         .background {
-            VisualEffectView(material: .sidebar, blendingMode: .behindWindow)
+            AppTheme.surface(colorScheme)
                 .ignoresSafeArea()
         }
         .alert(L10n.s("Clear clipboard history?", "清空剪贴板历史？"), isPresented: $showClearAlert) {
@@ -471,25 +472,5 @@ private struct SettingsRow<Trailing: View>: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
-    }
-}
-
-// MARK: - Visual Effect View helper
-
-struct VisualEffectView: NSViewRepresentable {
-    let material: NSVisualEffectView.Material
-    let blendingMode: NSVisualEffectView.BlendingMode
-
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = material
-        view.blendingMode = blendingMode
-        view.state = .active
-        return view
-    }
-
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
-        nsView.material = material
-        nsView.blendingMode = blendingMode
     }
 }

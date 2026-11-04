@@ -5,6 +5,7 @@ struct OnboardingView: View {
     @Bindable var settings: AppSettings
     var onDone: () -> Void
 
+    @Environment(\.colorScheme) private var colorScheme
     @State private var axGranted = AXIsProcessTrusted()
 
     var body: some View {
@@ -15,7 +16,7 @@ struct OnboardingView: View {
         }
         .frame(width: 500)
         .background {
-            VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
+            AppTheme.surface(colorScheme)
                 .ignoresSafeArea()
         }
         .task {

@@ -7,6 +7,7 @@ import SwiftUI
 /// to the app the user came from). Kept as a standalone view so its layout can
 /// be rendered and measured without the whole popup.
 struct ConfirmationCard: View {
+    @Environment(\.colorScheme) private var colorScheme
     let title:        String
     let message:      String
     let confirmTitle: String
@@ -53,7 +54,7 @@ struct ConfirmationCard: View {
             .padding(.vertical, 16)
         }
         .frame(width: Self.width)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .background(AppTheme.surface(colorScheme), in: RoundedRectangle(cornerRadius: 16))
         .overlay {
             RoundedRectangle(cornerRadius: 16)
                 .strokeBorder(.primary.opacity(0.08), lineWidth: 0.5)

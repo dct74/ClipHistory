@@ -17,6 +17,7 @@ struct PopupView: View {
         store.filtered(query: state.queryText, showImages: !settings.hideImages)
     }
 
+    @Environment(\.colorScheme) private var colorScheme
     @State private var searchFocused = true
     @State private var lastHoverPt: CGPoint? = nil
     @State private var hoverEnabled         = false
@@ -53,7 +54,7 @@ struct PopupView: View {
         // window's own (see buildPanel).
         .background {
             RoundedRectangle(cornerRadius: AppTheme.panelRadius)
-                .fill(Color(nsColor: .windowBackgroundColor))
+                .fill(AppTheme.surface(colorScheme))
         }
         .clipShape(RoundedRectangle(cornerRadius: AppTheme.panelRadius))
         .overlay {
