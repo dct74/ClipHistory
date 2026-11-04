@@ -9,9 +9,6 @@ final class PopupWindowController {
     private let updateChecker:  UpdateChecker
     private let popupState = PopupState()
 
-    var onOpenMenuBarSettings: (() -> Void)?
-    var onRestartApp: (() -> Void)?
-
     private var clickMonitor: Any?
     private var eventTap:     CFMachPort?
     private var tapSource:    CFRunLoopSource?
@@ -312,9 +309,7 @@ final class PopupWindowController {
             updateChecker: updateChecker,
             onSelect:      { [weak self] item in self?.pasteItem(item) },
             onDismiss:     { [weak self] in self?.hide() },
-            onConfirm:     { [weak self] in self?.confirmPendingAction() },
-            onOpenMenuBarSettings: { [weak self] in self?.onOpenMenuBarSettings?() },
-            onRestartApp:  { [weak self] in self?.onRestartApp?() }
+            onConfirm:     { [weak self] in self?.confirmPendingAction() }
         ))
 
         // The bridge never draws; it only needs to live in the window. Focus is

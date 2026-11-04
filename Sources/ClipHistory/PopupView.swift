@@ -8,8 +8,6 @@ struct PopupView: View {
     let onSelect:      (ClipItem) -> Void
     let onDismiss:     () -> Void
     let onConfirm:     () -> Void
-    let onOpenMenuBarSettings: () -> Void
-    let onRestartApp:  () -> Void
 
     // Single source of truth for filtering — same call the window controller
     // uses, so selection indices always agree between view and key handling.
@@ -30,8 +28,8 @@ struct PopupView: View {
             if updateChecker.updateAvailable {
                 updateBanner
             }
-            if settings.menuBarIconBlocked || settings.menuBarPolicyStale {
-                menuBarPolicyBanner
+            if !settings.showMenuBarIcon {
+                menuBarHiddenBanner
             }
             itemList
                 .onContinuousHover { phase in
@@ -190,46 +188,28 @@ struct PopupView: View {
         .buttonStyle(.plain)
     }
 
-    /// macOS owns menu bar visibility (System Settings → Menu Bar keeps a per-app
-    /// allow list). When it blocks us, or when its record describes an older
-    /// ad-hoc build, say so and offer the two actions that actually help.
-    private var menuBarPolicyBanner: some View {
-        let blocked = settings.menuBarIconBlocked
-        return HStack(spacing: 8) {
-            Image(systemName: "menubar.rectangle")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(.orange)
-
-            Text(blocked
-                 ? L10n.s("Hidden by System Settings → Menu Bar",
-                          "已被 系统设置 → 菜单栏 关闭")
-                 : L10n.s("Menu bar setting belongs to an older build — restart to apply",
-                          "菜单栏设置记录属于旧构建，重启后生效"))
-                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
-                .foregroundStyle(.primary.opacity(0.75))
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Spacer(minLength: 4)
-
-            if blocked {
-                bannerButton(L10n.s("Settings", "系统设置")) { onOpenMenuBarSettings() }
+    /// The icon is the usual route into Settings, so a hidden one has to be
+    /// restorable from the popup — the global hotkey still opens it.
+    private var menuBarHiddenBanner: some View {
+        Button { settings.showMenuBarIcon = true } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "menubar.rectangle")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.secondary)
+                Text(L10n.s("Menu bar icon is hidden", "菜单栏图标已隐藏"))
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.primary.opacity(0.75))
+                Spacer()
+                Text(L10n.s("Show again", "重新显示"))
+                    .font(.system(size: 10, weight: .black, design: .rounded))
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.accentColor.opacity(0.1), in: Capsule())
             }
-            bannerButton(L10n.s("Restart", "重启")) { onRestartApp() }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .background(Color.orange.opacity(0.07))
-    }
-
-    private func bannerButton(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 9.5, weight: .black, design: .rounded))
-                .foregroundStyle(.orange)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 2.5)
-                .background(Color.orange.opacity(0.14), in: Capsule())
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(Color.primary.opacity(0.04))
         }
         .buttonStyle(.plain)
     }
