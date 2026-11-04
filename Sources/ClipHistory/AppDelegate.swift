@@ -50,8 +50,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private var clipboardTimer:      Timer?
     private var lastFrontmostSource: SourceApp?   // updated on every app-switch
     private var lastPasteboardChangeCount = NSPasteboard.general.changeCount
-    private var visibilityObservation: NSKeyValueObservation?
-    private var suppressVisibilitySync = false
 
     private static let popupHotkeyID:     UInt32 = 1
     private static let pasteLatestHotkeyID: UInt32 = 2
@@ -95,9 +93,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     // MARK: - Menu bar
 
     private func setupMenuBar() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem?.button?.image = .clipHistoryMenuBar()
-        statusItem?.autosaveName = "ClipHistoryMenuBarItem"
+        settings.onShowMenuBarIconChanged = { [weak self] visible in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if visible { self.installStatusItem() } else { self.removeStatusItem() }
+            }
+        }
+        // Visibility is owned by the app: the item simply does not exist while
+        // the icon is hidden. It is created — never toggled with isVisible —
+        // because the system persists/restores per-item visibility (and macOS 26+
+        // additionally keeps a per-binary-path policy in ControlCenter) that can
+        // hide a freshly created item; a new item is the only state it can't
+        // override silently.
+        if settings.showMenuBarIcon { installStatusItem() }
+    }
+
+    private func installStatusItem() {
+        guard statusItem == nil else { return }
+
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        item.button?.image = .clipHistoryMenuBar()
 
         let menu = NSMenu()
         menu.delegate = self
@@ -114,53 +129,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         menu.addItem(NSMenuItem(title: L10n.s("Quit", "退出"),
                                 action: #selector(quit),
                                 keyEquivalent: "q"))
-        statusItem?.menu = menu
+        item.menu = menu
 
-        observeStatusItemVisibility()
+        statusItem = item
     }
 
-    /// The app owns icon visibility. The system's Menu Bar pane registers
-    /// ad-hoc-signed items by binary path, so its switch can't be relied on
-    /// (it targets stale paths and only applies at next launch) — hence no
-    /// `removalAllowed` and no expanded-interface session.
-    private func observeStatusItemVisibility() {
-        guard let statusItem else { return }
-
-        visibilityObservation = statusItem.observe(\.isVisible, options: [.new]) { [weak self] item, _ in
-            DispatchQueue.main.async {
-                guard let self, !self.suppressVisibilitySync else { return }
-                if self.settings.showMenuBarIcon != item.isVisible {
-                    self.settings.showMenuBarIcon = item.isVisible
-                }
-            }
-        }
-        settings.onShowMenuBarIconChanged = { [weak self] visible in
-            self?.applyMenuBarIconVisibility(visible)
-        }
-
-        // isVisible is ignored while the item is still being placed in the bar,
-        // and the status bar may re-apply its own persisted state afterwards
-        // (it records ad-hoc items by binary path, which goes stale on every
-        // rebuild). Our setting is the source of truth, so re-assert it a few
-        // times until it sticks.
-        for delay in [0.2, 1.0, 2.5] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                guard let self else { return }
-                self.applyMenuBarIconVisibility(self.settings.showMenuBarIcon, force: true)
-            }
-        }
-    }
-
-    /// Applies a visibility request and ignores the KVO echo it produces, so the
-    /// stored preference can't be overwritten by the value we just set.
-    private func applyMenuBarIconVisibility(_ visible: Bool, force: Bool = false) {
-        guard let statusItem else { return }
-        guard force || statusItem.isVisible != visible else { return }
-        suppressVisibilitySync = true
-        statusItem.isVisible = visible
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
-            self?.suppressVisibilitySync = false
-        }
+    private func removeStatusItem() {
+        guard let item = statusItem else { return }
+        NSStatusBar.system.removeStatusItem(item)
+        statusItem = nil
+        hotkeyHintItem = nil
     }
 
     private func showPopupFromStatusItem() {

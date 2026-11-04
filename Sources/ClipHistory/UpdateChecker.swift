@@ -8,7 +8,7 @@ import Observation
 final class UpdateChecker {
 
     /// Current app version — bump this when tagging a new release.
-    static let currentVersion = "1.6.0"
+    static let currentVersion = "1.6.1"
 
     // MARK: - Observable state
 
