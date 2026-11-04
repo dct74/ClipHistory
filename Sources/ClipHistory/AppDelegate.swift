@@ -1,6 +1,8 @@
 import AppKit
 import Carbon.HIToolbox
+import UserNotifications
 import SwiftUI
+
 
 
 
@@ -50,6 +52,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private var clipboardTimer:      Timer?
     private var lastFrontmostSource: SourceApp?   // updated on every app-switch
     private var lastPasteboardChangeCount = NSPasteboard.general.changeCount
+    private var visibilityObservation: NSKeyValueObservation?
+    private var policyTimer: Timer?
+    private var isInFallbackMode = false
+    private var suppressVisibilitySync = false
 
     private static let popupHotkeyID:     UInt32 = 1
     private static let pasteLatestHotkeyID: UInt32 = 2
@@ -83,6 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     func applicationWillTerminate(_ notification: Notification) {
         clipboardTimer?.invalidate()
+        policyTimer?.invalidate()
         store.flushNow()          // the 1 s debounce would otherwise drop the last clip
         unregisterHotkeys()
         if let eventHandlerRef {
@@ -93,19 +100,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     // MARK: - Menu bar
 
     private func setupMenuBar() {
-        settings.onShowMenuBarIconChanged = { [weak self] visible in
+        installStatusItem()
+
+        // The menu bar icon is owned by macOS: System Settings → Menu Bar keeps a
+        // per-app "allow" list. No public API exposes it, so the state is polled
+        // and mirrored — a flip in the pane hides/shows the item within a couple
+        // of seconds, like native menu bar extras. We never remove the item.
+        visibilityObservation = statusItem?.observe(\.isVisible, options: [.new]) { [weak self] item, _ in
             DispatchQueue.main.async {
                 guard let self else { return }
-                if visible { self.installStatusItem() } else { self.removeStatusItem() }
+                self.settings.showMenuBarIcon = item.isVisible
+                self.refreshMenuBarIconState()
             }
         }
-        // Visibility is owned by the app: the item simply does not exist while
-        // the icon is hidden. It is created — never toggled with isVisible —
-        // because the system persists/restores per-item visibility (and macOS 26+
-        // additionally keeps a per-binary-path policy in ControlCenter) that can
-        // hide a freshly created item; a new item is the only state it can't
-        // override silently.
-        if settings.showMenuBarIcon { installStatusItem() }
+
+        popup.onOpenMenuBarSettings = {
+            if let url = URL(string: "x-apple.systempreferences:com.apple.ControlCenter-Settings.extension") {
+                NSWorkspace.shared.open(url)
+            }
+        }
+        popup.onRestartApp = { [weak self] in self?.relaunchApp() }
+
+        policyTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            self?.syncWithSystemMenuBarPolicy()
+        }
+        syncWithSystemMenuBarPolicy()
     }
 
     private func installStatusItem() {
@@ -113,6 +132,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = .clipHistoryMenuBar()
+        // Stable identity: this is what the system persists visibility under.
+        item.autosaveName = "ClipHistoryMenuBarItem"
 
         let menu = NSMenu()
         menu.delegate = self
@@ -134,18 +155,144 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         statusItem = item
     }
 
-    private func removeStatusItem() {
-        guard let item = statusItem else { return }
-        NSStatusBar.system.removeStatusItem(item)
-        statusItem = nil
-        hotkeyHintItem = nil
+    /// Mirrors the system policy onto `isVisible` and into the state the popup uses.
+    private func syncWithSystemMenuBarPolicy() {
+        guard let policy = currentMenuBarPolicy() else {
+            refreshMenuBarIconState()
+            return
+        }
+        let wasBlocked = settings.menuBarIconBlocked
+        settings.menuBarIconBlocked = !policy.isAllowed
+        settings.menuBarPolicyStale = policy.recordedForAnotherBuild
+
+        // A menu-bar-only app with its icon hidden is unreachable: no menu bar
+        // icon, no Dock tile, and double-clicking the app does nothing. Give it a
+        // Dock tile (and a one-time notification) so there is a way back in.
+        if !policy.isAllowed && !wasBlocked {
+            enterFallbackMode()
+        } else if policy.isAllowed && wasBlocked {
+            leaveFallbackMode()
+        }
+
+        guard let item = statusItem, item.isVisible != policy.isAllowed else { return }
+        suppressVisibilitySync = true
+        item.isVisible = policy.isAllowed
+        settings.showMenuBarIcon = policy.isAllowed
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            self?.suppressVisibilitySync = false
+            self?.refreshMenuBarIconState()
+        }
     }
 
-    private func showPopupFromStatusItem() {
-        guard let button = statusItem?.button, let window = button.window else { return }
-        let rect = window.convertToScreen(button.convert(button.bounds, to: nil))
-        popup.show(near: rect)
+    // MARK: - Menu bar policy (System Settings → Menu Bar)
+
+    struct MenuBarPolicy {
+        let isAllowed: Bool
+        /// The pane recorded this app against another binary (each ad-hoc build
+        /// gets a path-keyed record), so its switch may not describe us.
+        let recordedForAnotherBuild: Bool
     }
+
+    /// The pane keeps its per-app allow list in ControlCenter's group container.
+    /// No public API exposes it, so it is read here; `refreshMenuBarIconState`
+    /// falls back to the zero-height heuristic when the file can't be read.
+    private func currentMenuBarPolicy() -> MenuBarPolicy? {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let url = home.appendingPathComponent(
+            "Library/Group Containers/group.com.apple.controlcenter/Library/Preferences/group.com.apple.controlcenter.plist")
+        guard let data = try? Data(contentsOf: url),
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let blob = plist["trackedApplications"] as? Data,
+              let tracked = try? PropertyListSerialization.propertyList(from: blob, format: nil)
+        else { return nil }
+
+        guard let bundleID = Bundle.main.bundleIdentifier else { return nil }
+        let executable = Bundle.main.executableURL?.resolvingSymlinksInPath().path ?? ""
+
+        var entries: [[String: Any]] = []
+        collectEntries(tracked, bundleID: bundleID, into: &entries)
+        guard let first = entries.first else { return nil }
+
+        let allowed = first["isAllowed"] as? Bool ?? true
+        let recordedPaths = allStrings(in: first).filter { $0.hasPrefix("file://") }
+        let matched = recordedPaths.isEmpty || recordedPaths.contains { $0.contains(executable) }
+        return MenuBarPolicy(isAllowed: allowed, recordedForAnotherBuild: !matched)
+    }
+
+    private func collectEntries(_ node: Any, bundleID: String, into out: inout [[String: Any]]) {
+        if let dict = node as? [String: Any] {
+            if dict["isAllowed"] != nil, allStrings(in: dict).contains(where: { $0.contains(bundleID) }) {
+                out.append(dict)
+            }
+            for value in dict.values { collectEntries(value, bundleID: bundleID, into: &out) }
+        } else if let array = node as? [Any] {
+            for value in array { collectEntries(value, bundleID: bundleID, into: &out) }
+        }
+    }
+
+    private func allStrings(in node: Any) -> [String] {
+        if let string = node as? String { return [string] }
+        if let dict = node as? [String: Any] { return dict.values.flatMap { allStrings(in: $0) } }
+        if let array = node as? [Any] { return array.flatMap { allStrings(in: $0) } }
+        return []
+    }
+
+    /// Updates the flags the popup shows. The zero-height window is the fallback
+    /// signal when the policy store can't be read.
+    private func refreshMenuBarIconState() {
+        guard let item = statusItem else {
+            settings.menuBarIconBlocked = false
+            settings.menuBarPolicyStale = false
+            return
+        }
+        if let policy = currentMenuBarPolicy() {
+            settings.menuBarIconBlocked = !policy.isAllowed
+            settings.menuBarPolicyStale = policy.recordedForAnotherBuild
+        } else {
+            let frame = item.button?.window?.frame ?? .zero
+            let drawn = frame.height >= 1 && frame.width >= 1
+            let blocked = settings.showMenuBarIcon && !drawn
+            settings.menuBarIconBlocked = blocked
+            settings.menuBarPolicyStale = false
+            if blocked { enterFallbackMode() } else { leaveFallbackMode() }
+        }
+    }
+
+    /// Dock tile + notification while the menu bar icon is switched off.
+    private func enterFallbackMode() {
+        guard !isInFallbackMode else { return }
+        isInFallbackMode = true
+        NSApp.setActivationPolicy(.regular)
+
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { granted, _ in
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            content.title = L10n.s("Menu bar icon hidden", "菜单栏图标已隐藏")
+            content.body = L10n.s("Re-enable ClipHistory in System Settings → Menu Bar, then reopen the app.",
+                                  "在 系统设置 → 菜单栏 重新打开 ClipHistory，然后重启 App。")
+            UNUserNotificationCenter.current().add(
+                UNNotificationRequest(identifier: "ClipHistoryMenuBarHidden", content: content, trigger: nil))
+        }
+    }
+
+    private func leaveFallbackMode() {
+        guard isInFallbackMode else { return }
+        isInFallbackMode = false
+        NSApp.setActivationPolicy(.accessory)
+    }
+
+    /// Quits and reopens the app so ControlCenter re-applies its policy — the
+    /// switch only takes effect when the item is registered.
+    fileprivate func relaunchApp() {
+        let url = Bundle.main.bundleURL
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, _ in
+            DispatchQueue.main.async { NSApplication.shared.terminate(nil) }
+        }
+    }
+
+
 
     /// Keeps the Settings toggle in step with the system's Menu Bar settings and
     /// carries the app's own re-add action back into the status item.
@@ -192,6 +339,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     @objc private func quit() { NSApp.terminate(nil) }
+
+    /// Double-clicking the app (or its Dock tile) opens Settings — the only
+    /// window there is.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { openSettings() }
+        return true
+    }
 
     func windowWillClose(_ notification: Notification) {
         guard let win = notification.object as? NSWindow, win === settingsWindow else { return }

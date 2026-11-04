@@ -58,18 +58,16 @@ final class AppSettings {
 
     // MARK: - Callbacks (set by AppDelegate)
 
-    /// Whether the menu bar icon is shown. The system's Menu Bar pane cannot
-    /// manage an ad-hoc signed item reliably (it registers by binary path), so
-    /// the app owns this setting.
-    var showMenuBarIcon: Bool = true {
-        didSet {
-            guard showMenuBarIcon != oldValue else { return }
-            save()
-            onShowMenuBarIconChanged?(showMenuBarIcon)
-        }
-    }
+    /// Mirror of the system's Menu Bar policy for this app. The icon is owned by
+    /// macOS (System Settings → Menu Bar); the app only reflects that state.
+    var showMenuBarIcon: Bool = true
 
-    var onShowMenuBarIconChanged: ((Bool) -> Void)?
+    /// True when the system's policy is "don't allow in the menu bar".
+    var menuBarIconBlocked: Bool = false
+
+    /// The pane's record was written for a different (older) ad-hoc binary.
+    var menuBarPolicyStale: Bool = false
+
 
     /// Shortcuts the system refused to register (conflict with another app, or
     /// the same combo bound twice). Shown as a warning in Settings.
@@ -98,7 +96,6 @@ final class AppSettings {
         static let pasteLatestHotkey      = "pasteLatestHotkey"
         static let pasteNextHotkey        = "pasteNextHotkey"
         static let pasteAllHotkey         = "pasteAllHotkey"
-        static let showMenuBarIcon        = "showMenuBarIcon"
         static let maxItems               = "maxItems"
         static let hideImages             = "hideImages"
         static let rememberScrollPosition = "rememberScrollPosition"
@@ -126,9 +123,6 @@ final class AppSettings {
 
         hideImages = d.bool(forKey: Keys.hideImages)
         rememberScrollPosition = d.bool(forKey: Keys.rememberScrollPosition)
-        if d.object(forKey: Keys.showMenuBarIcon) != nil {
-            showMenuBarIcon = d.bool(forKey: Keys.showMenuBarIcon)
-        }
         if let ids = d.stringArray(forKey: Keys.excludedBundleIDs) {
             excludedBundleIDs = Set(ids)
         }
@@ -157,7 +151,6 @@ final class AppSettings {
         Self.store(pasteNextHotkey, key: Keys.pasteNextHotkey, into: d)
         Self.store(pasteAllHotkey,  key: Keys.pasteAllHotkey,  into: d)
         d.set(maxItems,                 forKey: Keys.maxItems)
-        d.set(showMenuBarIcon,          forKey: Keys.showMenuBarIcon)
         d.set(hideImages,               forKey: Keys.hideImages)
         d.set(rememberScrollPosition,   forKey: Keys.rememberScrollPosition)
         d.set(Array(excludedBundleIDs), forKey: Keys.excludedBundleIDs)
