@@ -125,7 +125,22 @@ hdiutil create \
     -format    UDZO \
     -o         "$DMG"
 
-# ── 6. Checksum (users verify the download with it) ──────────────────────────
+# ── 6. Verify the DMG actually carries this build ────────────────────────────
+# A failed hdiutil run used to leave the previous DMG in place, which then got
+# published under the new version. Read the version back out of the image.
+echo "▸ Verifying DMG contents…"
+VERIFY_MNT="$(mktemp -d)"
+hdiutil attach -nobrowse -readonly -mountpoint "$VERIFY_MNT" "$DMG" >/dev/null
+DMG_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+    "$VERIFY_MNT/$APP_NAME.app/Contents/Info.plist")"
+hdiutil detach "$VERIFY_MNT" -quiet
+rmdir "$VERIFY_MNT" 2>/dev/null || true
+if [ "$DMG_VERSION" != "$VERSION" ]; then
+    echo "✗ DMG carries $DMG_VERSION, expected $VERSION" >&2
+    exit 1
+fi
+
+# ── 7. Checksum (users verify the download with it) ──────────────────────────
 echo "▸ Writing checksum…"
 ( cd "$DIST" && shasum -a 256 "$APP_NAME.dmg" > "$APP_NAME.dmg.sha256" )
 
