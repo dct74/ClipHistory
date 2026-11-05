@@ -22,6 +22,12 @@ struct HotkeyShortcut: Codable, Equatable {
         modifiers: NSEvent.ModifierFlags([.command, .control]).rawValue
     )
 
+    /// Asks for confirmation to clear the whole history.
+    static let clearHistoryDefault = HotkeyShortcut(
+        keyCode: 40,      // K
+        modifiers: NSEvent.ModifierFlags([.command, .control, .option]).rawValue
+    )
+
     /// Pastes every clip in the current scope in one run.
     static let pasteAllDefault = HotkeyShortcut(
         keyCode: 9,       // V

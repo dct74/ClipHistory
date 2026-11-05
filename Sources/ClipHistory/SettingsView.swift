@@ -97,7 +97,7 @@ struct SettingsView: View {
     /// Rejects a combination already bound to another action.
     private func shortcutIsFree(_ candidate: HotkeyShortcut, current: HotkeyShortcut) -> Bool {
         [settings.hotkey, settings.pasteLatestHotkey,
-         settings.pasteNextHotkey, settings.pasteAllHotkey]
+         settings.pasteNextHotkey, settings.pasteAllHotkey, settings.clearHistoryHotkey]
             .filter { $0 != current }
             .allSatisfy { $0 != candidate }
     }
@@ -266,6 +266,13 @@ struct SettingsView: View {
                     }
 
                     Spacer()
+
+                    HotkeyRecorder(hotkey: $settings.clearHistoryHotkey) { candidate in
+                        shortcutIsFree(candidate, current: settings.clearHistoryHotkey)
+                    }
+                    .frame(width: 120, height: 30)
+                    .help(L10n.s("Global shortcut for Clear All Data — asks for confirmation.",
+                                 "清空全部数据的全局快捷键——按下后会先弹出确认框。"))
 
                     Button(L10n.s("Clear", "清空")) {
                         showClearAlert = true

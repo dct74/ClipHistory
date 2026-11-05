@@ -24,6 +24,11 @@ final class AppSettings {
         didSet { save(); onHotkeysChanged?() }
     }
 
+    /// Opens the clear-history confirmation.
+    var clearHistoryHotkey: HotkeyShortcut = .clearHistoryDefault {
+        didSet { save(); onHotkeysChanged?() }
+    }
+
     /// Pastes every clip in the current scope in order.
     var pasteAllHotkey: HotkeyShortcut = .pasteAllDefault {
         didSet { save(); onHotkeysChanged?() }
@@ -98,6 +103,7 @@ final class AppSettings {
         static let pasteLatestHotkey      = "pasteLatestHotkey"
         static let pasteNextHotkey        = "pasteNextHotkey"
         static let pasteAllHotkey         = "pasteAllHotkey"
+        static let clearHistoryHotkey     = "clearHistoryHotkey"
         static let showMenuBarIcon        = "showMenuBarIcon"
         static let maxItems               = "maxItems"
         static let hideImages             = "hideImages"
@@ -120,6 +126,7 @@ final class AppSettings {
         pasteLatestHotkey = Self.decode(d.data(forKey: Keys.pasteLatestHotkey)) ?? .pasteLatestDefault
         pasteNextHotkey = Self.decode(d.data(forKey: Keys.pasteNextHotkey)) ?? .pasteNextDefault
         pasteAllHotkey  = Self.decode(d.data(forKey: Keys.pasteAllHotkey))  ?? .pasteAllDefault
+        clearHistoryHotkey = Self.decode(d.data(forKey: Keys.clearHistoryHotkey)) ?? .clearHistoryDefault
 
         let n = d.integer(forKey: Keys.maxItems)
         if n >= 5 { maxItems = n }
@@ -156,6 +163,7 @@ final class AppSettings {
         Self.store(pasteLatestHotkey, key: Keys.pasteLatestHotkey, into: d)
         Self.store(pasteNextHotkey, key: Keys.pasteNextHotkey, into: d)
         Self.store(pasteAllHotkey,  key: Keys.pasteAllHotkey,  into: d)
+        Self.store(clearHistoryHotkey, key: Keys.clearHistoryHotkey, into: d)
         d.set(maxItems,                 forKey: Keys.maxItems)
         d.set(showMenuBarIcon,          forKey: Keys.showMenuBarIcon)
         d.set(hideImages,               forKey: Keys.hideImages)

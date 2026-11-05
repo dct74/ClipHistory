@@ -58,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private static let pasteLatestHotkeyID: UInt32 = 2
     private static let pasteNextHotkeyID: UInt32 = 3
     private static let pasteAllHotkeyID:  UInt32 = 4
+    private static let clearHistoryHotkeyID: UInt32 = 5
 
     // MARK: - Lifecycle
 
@@ -355,6 +356,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         if !register(settings.pasteAllHotkey, id: Self.pasteAllHotkeyID) {
             failed.insert(L10n.s("Paste All Items", "全部粘贴"))
         }
+        if !register(settings.clearHistoryHotkey, id: Self.clearHistoryHotkeyID) {
+            failed.insert(L10n.s("Clear History", "清空历史"))
+        }
         settings.unavailableHotkeys = failed
     }
 
@@ -391,6 +395,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             DispatchQueue.main.async { [weak self] in self?.popup.pasteNextInOrder() }
         case Self.pasteAllHotkeyID:
             DispatchQueue.main.async { [weak self] in self?.popup.pasteAllInOrder() }
+        case Self.clearHistoryHotkeyID:
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                let anchor = CaretLocator.currentRect()
+                    ?? CGRect(origin: NSEvent.mouseLocation, size: .zero)
+                self.popup.presentClearConfirmation(near: anchor)
+            }
         default:
             showPopupFromHotkey()
         }

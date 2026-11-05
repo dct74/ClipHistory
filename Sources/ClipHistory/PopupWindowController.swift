@@ -114,11 +114,9 @@ final class PopupWindowController {
         pasteGeneration &+= 1        // any running paste-all chain stops here
         writeToPasteboard(item)
 
-        hide()
-
-        // Short delay so the panel finishes dismissing before Cmd+V fires.
-        // App A's text field kept focus the whole time (nonactivatingPanel),
-        // so no activate() call is needed — the Cmd+V lands directly into App A.
+        // The panel stays open so the next clip can be picked straight away. The
+        // synthesized ⌘V still lands in App A: the panel is non-activating, so
+        // our app never becomes frontmost.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
             self?.simulateCmdV()
         }
@@ -132,6 +130,13 @@ final class PopupWindowController {
         panel?.isVisible == true
             ? filteredItems
             : store.filtered(query: "", showImages: !settings.hideImages)
+    }
+
+    /// ⌃⌥⌘⌫: open the panel with the "clear everything" confirmation already up,
+    /// so a destructive global shortcut still needs an explicit ⏎.
+    func presentClearConfirmation(near anchor: CGRect) {
+        show(near: anchor)
+        popupState.confirmation = .clearAll
     }
 
     /// Called when the history or the active app changes — the cycle restarts
@@ -161,7 +166,6 @@ final class PopupWindowController {
     /// Sends ⌘V to App A without touching the pasteboard.
     private func pasteClipboardAsIs() {
         pasteGeneration &+= 1
-        hide()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
             self?.simulateCmdV()
         }
@@ -553,8 +557,12 @@ final class PopupWindowController {
         guard let confirmation = popupState.confirmation else { return }
         popupState.confirmation = nil
         switch confirmation {
-        case .clearAll:       store.clearAll()
-        case .delete(let id): store.remove(id: id)
+        case .clearAll:
+            store.clearAll()
+            // Nothing left to browse — close instead of leaving an empty panel.
+            DispatchQueue.main.async { [weak self] in self?.hide() }
+        case .delete(let id):
+            store.remove(id: id)      // keep the panel open to keep browsing
         }
     }
 
