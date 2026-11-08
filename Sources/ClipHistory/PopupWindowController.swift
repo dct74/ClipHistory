@@ -313,7 +313,9 @@ final class PopupWindowController {
             updateChecker: updateChecker,
             onSelect:      { [weak self] item in self?.pasteItem(item) },
             onDismiss:     { [weak self] in self?.hide() },
-            onConfirm:     { [weak self] in self?.confirmPendingAction() }
+            onConfirm:     { [weak self] in self?.confirmPendingAction() },
+            onDelete:      { [weak self] id in self?.deleteItem(id) },
+            onUndo:        { [weak self] in self?.undoDeletion() }
         ))
 
         // The bridge never draws; it only needs to live in the window. Focus is
@@ -429,6 +431,15 @@ final class PopupWindowController {
         }
         if matches(settings.pasteAllHotkey, keyCode: keyCode, flags: flags) {
             DispatchQueue.main.async { [weak self] in self?.pasteAllInOrder() }
+            return nil
+        }
+
+        // ⌘Z undoes the last deletion in the popup; everything else with Cmd is
+        // left to the OS / App A.
+        if keyCode == 6,   // Z
+           NSEvent.ModifierFlags(rawValue: UInt(flags.rawValue))
+               .intersection([.command, .control, .option, .shift]) == .command {
+            DispatchQueue.main.async { [weak self] in self?.undoDeletion() }
             return nil
         }
 
@@ -552,6 +563,21 @@ final class PopupWindowController {
         }
     }
 
+    /// Row trash: delete immediately — the undo bar under the list is the safety
+    /// net, not a confirmation dialog.
+    private func deleteItem(_ id: UUID) {
+        store.remove(id: id)
+        let count = filteredItems.count
+        popupState.selectedIndex = min(popupState.selectedIndex, max(count - 1, 0))
+    }
+
+    /// ⌘Z / status menu / undo bar: restores the last deleted clip (or the whole history).
+    func undoDeletion() {
+        if store.undoDeletion() && !popupState.searchText.isEmpty {
+            popupState.searchText = ""
+        }
+    }
+
     /// Applies whatever the confirmation card is asking about.
     private func confirmPendingAction() {
         guard let confirmation = popupState.confirmation else { return }
@@ -561,8 +587,6 @@ final class PopupWindowController {
             store.clearAll()
             // Nothing left to browse — close instead of leaving an empty panel.
             DispatchQueue.main.async { [weak self] in self?.hide() }
-        case .delete(let id):
-            store.remove(id: id)      // keep the panel open to keep browsing
         }
     }
 

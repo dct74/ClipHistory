@@ -40,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     private var statusItem:       NSStatusItem?
     private var hotkeyHintItem:   NSMenuItem?   // updated live when hotkey changes
+    private var undoMenuItem:     NSMenuItem?
     private var settingsWindow:   NSWindow?
     private var onboardingWindow: NSWindow?
     private var onboardingDelegate = OnboardingWindowDelegate()
@@ -142,6 +143,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         menu.addItem(hint)
         hotkeyHintItem = hint
 
+        let undo = NSMenuItem(title: L10n.s("Undo Delete", "撤销删除"),
+                             action: #selector(undoDeletion),
+                             keyEquivalent: "z")
+        undo.target = self
+        menu.addItem(undo)
+        undoMenuItem = undo
+
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: L10n.s("Settings…", "设置…"),
                                 action: #selector(openSettings),
@@ -177,6 +185,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     /// Refresh the hint line right before the menu opens (hotkey might have changed)
     func menuWillOpen(_ menu: NSMenu) {
         hotkeyHintItem?.title = hintTitle
+        undoMenuItem?.isEnabled = store.canUndo
+    }
+
+    @objc private func undoDeletion() {
+        popup.undoDeletion()
     }
 
     private var hintTitle: String {

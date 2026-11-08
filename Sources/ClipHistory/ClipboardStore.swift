@@ -142,6 +142,17 @@ final class ClipboardStore {
     /// "suppress the next poll" flag.
     private(set) var lastWrittenChangeCount = -1
 
+    /// Remembers the last few deletions so they can be undone (⌘Z in the popup,
+    /// or the status menu). Not persisted — an undo is a session-level courtesy.
+    enum Deletion: Equatable {
+        case removed(index: Int, item: ClipItem)
+        case cleared([ClipItem])
+    }
+
+    private var undoStack: [Deletion] = []
+    private(set) var canUndo: Bool = false
+    private static let undoLimit = 10
+
     /// Fired whenever a new clip lands in the history — drives resetting the
     /// paste cycle.
     var onItemCaptured: (() -> Void)?
@@ -252,9 +263,34 @@ final class ClipboardStore {
     }
 
     func clearAll() {
+        if !items.isEmpty { pushUndo(.cleared(items)) }
         items = []
         imageCache.removeAllObjects()
         flushSave()
+    }
+
+    /// Restores the most recent deletion or clear. Returns false when there is
+    /// nothing to undo.
+    @discardableResult
+    func undoDeletion() -> Bool {
+        guard let action = undoStack.popLast() else { return false }
+        switch action {
+        case .removed(let index, let item):
+            items.insert(item, at: min(max(index, 0), items.count))
+        case .cleared(let previous):
+            items = previous
+        }
+        imageCache.removeAllObjects()
+        canUndo = !undoStack.isEmpty
+        trimToLimit()
+        scheduleSave()
+        return true
+    }
+
+    private func pushUndo(_ action: Deletion) {
+        undoStack.append(action)
+        if undoStack.count > Self.undoLimit { undoStack.removeFirst() }
+        canUndo = true
     }
 
     func updateMaxCount(_ n: Int) {
@@ -266,6 +302,8 @@ final class ClipboardStore {
 
     func remove(id: UUID) {
         if let idx = items.firstIndex(where: { $0.id == id }) {
+            let item = items[idx]
+            pushUndo(.removed(index: idx, item: item))
             items.remove(at: idx)
             imageCache.removeObject(forKey: id as NSUUID)
             scheduleSave()

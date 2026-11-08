@@ -8,7 +8,6 @@ import Observation
 /// app the user came from). The card is driven by the event tap we already own.
 enum PopupConfirmation: Equatable {
     case clearAll
-    case delete(UUID)
 }
 
 /// Shared mutable state between PopupWindowController and PopupView.

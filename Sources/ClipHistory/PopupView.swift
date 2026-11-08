@@ -8,6 +8,8 @@ struct PopupView: View {
     let onSelect:      (ClipItem) -> Void
     let onDismiss:     () -> Void
     let onConfirm:     () -> Void
+    let onDelete:      (UUID) -> Void
+    let onUndo:        () -> Void
 
     // Single source of truth for filtering — same call the window controller
     // uses, so selection indices always agree between view and key handling.
@@ -44,6 +46,9 @@ struct PopupView: View {
                         lastHoverPt = pt
                     }
                 }
+            if store.canUndo {
+                undoBar
+            }
             hintsBar
         }
         // Measured against a real NSMenu on this system: the menu draws an
@@ -83,20 +88,41 @@ struct PopupView: View {
     // MARK: - Confirmation card
 
     private func confirmationCard(_ confirmation: PopupConfirmation) -> some View {
-        let isClearAll = confirmation == .clearAll
-        return ConfirmationCard(
-            title: isClearAll ? L10n.s("Clear Clipboard History?", "清空剪贴板历史？")
-                              : L10n.s("Delete This Clip?", "删除这条记录？"),
-            message: isClearAll
-                ? L10n.s("This will permanently remove all \(store.items.count) stored items.",
-                         "将永久删除已保存的全部 \(store.items.count) 条记录。")
-                : L10n.s("This will permanently remove this item.",
-                         "将永久删除这条记录。"),
-            confirmTitle: isClearAll ? L10n.s("Clear All", "全部清空")
-                                     : L10n.s("Delete", "删除"),
+        ConfirmationCard(
+            title: L10n.s("Clear Clipboard History?", "清空剪贴板历史？"),
+            message: L10n.s("Removes all \(store.items.count) stored items.\nPress ⌘Z afterwards to undo.",
+                            "将删除已保存的全部 \(store.items.count) 条记录。\n之后按 ⌘Z 可撤销。"),
+            confirmTitle: L10n.s("Clear All", "全部清空"),
             onCancel: { state.confirmation = nil },
             onConfirm: onConfirm
         )
+    }
+
+    /// Appears under the list after a delete, so an accidental one is one click
+    /// (or ⌘Z) away from being restored.
+    private var undoBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.uturn.backward")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.secondary)
+            Text(L10n.s("Deleted", "已删除"))
+                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                .foregroundStyle(.primary.opacity(0.6))
+            Spacer()
+            Button { onUndo() } label: {
+                Text(L10n.s("Undo ⌘Z", "撤销 ⌘Z"))
+                    .font(.system(size: 10, weight: .black, design: .rounded))
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.accentColor.opacity(0.1), in: Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+        .background(Color.primary.opacity(0.04))
+        .transition(.opacity)
     }
 
     // MARK: - Header
@@ -434,7 +460,7 @@ struct PopupView: View {
         VStack(alignment: .trailing, spacing: 6) {
             if selected {
                 Button {
-                    state.confirmation = .delete(item.id)
+                    onDelete(item.id)
                 } label: {
                     Image(systemName: "trash")
                         .font(.system(size: 9.5, weight: .bold))
