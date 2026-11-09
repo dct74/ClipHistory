@@ -19,14 +19,18 @@ final class PopupWindowController {
     /// How far the ⌃⌘V cycle has walked into its scope.
     private var cycleCursor = 0
 
+    /// True when the panel is visible *because* the user already pasted from it.
+    private var pastedSinceShown = false
+
     /// Bumped whenever a new paste action starts — an older paste-all chain
     /// checks it and stops, so two chains can never interleave pastes.
     private var pasteGeneration = 0
 
-    /// The scope the running cycle walks over. Captured on the first press —
+    /// The scope the running cycle walks over, as ids so an evicted clip's image
+    /// data isn't pinned for the rest of the cycle. Captured on the first press —
     /// otherwise the popup closing after that paste would switch the scope back
     /// to the whole history mid-cycle.
-    private var cycleScope: [ClipItem] = []
+    private var cycleScope: [UUID] = []
 
     /// Deadline during which synthesized ⌘V presses must not be mistaken for
     /// real ones — otherwise each paste would re-trigger the paste-next hotkey.
@@ -54,6 +58,7 @@ final class PopupWindowController {
     // MARK: - Show / Hide
 
     func show(near anchor: CGRect) {
+        pastedSinceShown = false
         pasteGeneration &+= 1
         resetPasteCycle()
         popupState.reset(keepSelection: settings.rememberScrollPosition)
@@ -117,8 +122,11 @@ final class PopupWindowController {
         // The panel stays open so the next clip can be picked straight away. The
         // synthesized ⌘V still lands in App A: the panel is non-activating, so
         // our app never becomes frontmost.
+        pastedSinceShown = true
+        let generation = pasteGeneration
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
-            self?.simulateCmdV()
+            guard let self, generation == self.pasteGeneration else { return }
+            self.simulateCmdV()
         }
     }
 
@@ -132,7 +140,7 @@ final class PopupWindowController {
             : store.filtered(query: "", showImages: !settings.hideImages)
     }
 
-    /// ⌃⌥⌘⌫: open the panel with the "clear everything" confirmation already up,
+    /// ⌃⌥⌘K: open the panel with the "clear everything" confirmation already up,
     /// so a destructive global shortcut still needs an explicit ⏎.
     func presentClearConfirmation(near anchor: CGRect) {
         show(near: anchor)
@@ -166,8 +174,11 @@ final class PopupWindowController {
     /// Sends ⌘V to App A without touching the pasteboard.
     private func pasteClipboardAsIs() {
         pasteGeneration &+= 1
+        pastedSinceShown = true
+        let generation = pasteGeneration
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
-            self?.simulateCmdV()
+            guard let self, generation == self.pasteGeneration else { return }
+            self.simulateCmdV()
         }
     }
 
@@ -178,12 +189,17 @@ final class PopupWindowController {
     func pasteNextInOrder() {
         guard claimPress() else { return }
 
-        if cycleScope.isEmpty { cycleScope = pasteScopeItems }
-        guard cycleCursor < cycleScope.count else { return }
+        if cycleScope.isEmpty { cycleScope = pasteScopeItems.map(\.id) }
 
-        let item = cycleScope[cycleCursor]
-        cycleCursor += 1
-        pasteItem(item)
+        // Clips can disappear mid-cycle (deleted, trimmed); skip whatever is gone.
+        while cycleCursor < cycleScope.count {
+            let id = cycleScope[cycleCursor]
+            cycleCursor += 1
+            if let item = store.items.first(where: { $0.id == id }) {
+                pasteItem(item)
+                return
+            }
+        }
     }
 
     /// ⌃⌥⌘V: paste everything in scope, oldest → newest. Consecutive text clips
@@ -436,7 +452,8 @@ final class PopupWindowController {
 
         // ⌘Z undoes the last deletion in the popup; everything else with Cmd is
         // left to the OS / App A.
-        if keyCode == 6,   // Z
+        if keyCode == 6,   // Z — only ours when there is something to undo
+           store.canUndo,
            NSEvent.ModifierFlags(rawValue: UInt(flags.rawValue))
                .intersection([.command, .control, .option, .shift]) == .command {
             DispatchQueue.main.async { [weak self] in self?.undoDeletion() }
@@ -446,6 +463,15 @@ final class PopupWindowController {
         // Always pass Cmd and Ctrl combos through so the OS / App A can handle
         // things like Cmd+Q, Cmd+Tab, Ctrl+C, etc.
         if flags.contains(.maskCommand) || flags.contains(.maskControl) {
+            return Unmanaged.passUnretained(event)
+        }
+
+        // The panel stays up after a paste so several clips can be picked in a
+        // row. The moment the user starts typing or deleting, hand the keyboard
+        // back to the app they are typing in — otherwise their text would land in
+        // our search field.
+        if pastedSinceShown, keyCode == 51 || isPrintableKey(event) {
+            DispatchQueue.main.async { [weak self] in self?.hide() }
             return Unmanaged.passUnretained(event)
         }
 
@@ -556,6 +582,17 @@ final class PopupWindowController {
     }
 
     /// Drops control characters a key press might carry (tab, delete, …).
+    /// True for a key down that would insert text — navigation keys and modifier
+    /// combos are handled elsewhere.
+    private func isPrintableKey(_ event: CGEvent) -> Bool {
+        var chars = [UniChar](repeating: 0, count: 4)
+        var length = 0
+        event.keyboardGetUnicodeString(maxStringLength: 4, actualStringLength: &length, unicodeString: &chars)
+        guard length > 0 else { return false }
+        let typed = String(decoding: chars.prefix(length), as: Unicode.UTF16.self)
+        return !Self.printableCharacters(in: typed).isEmpty
+    }
+
     private static func printableCharacters(in text: String) -> String {
         text.filter { ch in
             guard let value = ch.unicodeScalars.first?.value else { return false }
@@ -566,6 +603,7 @@ final class PopupWindowController {
     /// Row trash: delete immediately — the undo bar under the list is the safety
     /// net, not a confirmation dialog.
     private func deleteItem(_ id: UUID) {
+        resetPasteCycle()
         store.remove(id: id)
         let count = filteredItems.count
         popupState.selectedIndex = min(popupState.selectedIndex, max(count - 1, 0))
@@ -584,6 +622,7 @@ final class PopupWindowController {
         popupState.confirmation = nil
         switch confirmation {
         case .clearAll:
+            resetPasteCycle()
             store.clearAll()
             // Nothing left to browse — close instead of leaving an empty panel.
             DispatchQueue.main.async { [weak self] in self?.hide() }

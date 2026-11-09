@@ -9,8 +9,8 @@ enum PopupPlacement {
 
     /// Tries above → below → right → left and takes the first direction with
     /// enough room. The edge facing the anchor is pinned to the gap:
-    ///   above → panel bottom = anchor top − gap
-    ///   below → panel top    = anchor bottom + gap
+    ///   above → panel bottom = anchor top + gap
+    ///   below → panel top    = anchor bottom − gap
     ///   right → panel left   = anchor right + gap
     ///   left  → panel right  = anchor left − gap
     ///

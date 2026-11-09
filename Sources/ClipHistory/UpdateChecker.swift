@@ -8,7 +8,7 @@ import Observation
 final class UpdateChecker {
 
     /// Current app version — bump this when tagging a new release.
-    static let currentVersion = "1.7.4"
+    static let currentVersion = "1.7.5"
 
     // MARK: - Observable state
 
@@ -53,7 +53,7 @@ final class UpdateChecker {
     // MARK: - Semver comparison
 
     /// Returns true when `remote` is strictly newer than `current`.
-    private static func isNewer(remote: String, current: String) -> Bool {
+    static func isNewer(remote: String, current: String) -> Bool {
         let r = remote.split(separator: ".").compactMap { Int($0) }
         let c = current.split(separator: ".").compactMap { Int($0) }
         for i in 0..<max(r.count, c.count) {

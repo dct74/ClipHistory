@@ -54,7 +54,7 @@ If you want 200 features, use Raycast. If you want iCloud sync, use Paste. If yo
 - **🖼 Text & images** — captures plain text, screenshots, images from Finder, browsers, Preview
 - **🔍 Search** — type to filter instantly; searches content and source app name, CJK input methods included
 - **⌃⌘V one by one, ⌃⌥⌘V all at once** — walk the history in order, or paste everything in a single run
-- **🔐 Encrypted history** — disk storage is AES-256-GCM encrypted; the key lives in your Keychain, never on disk
+- **🔐 Encrypted history** — disk storage is AES-256-GCM encrypted; the key sits in a `0600` file next to the history (the Keychain is only used once, to migrate a key from older versions)
 - **🔒 Sensitive data protection** — items marked by password managers (`org.nspasteboard.ConcealedType`) are automatically skipped before recording
 - **🚫 Per-app exclusions** — block any app from being recorded; changes from excluded apps are silently ignored
 - **👁 Hide images toggle** — one click in the popup header to go text-only
@@ -110,13 +110,15 @@ The list runs oldest → newest: the earliest clip sits at the top, your latest 
 | Action | Shortcut |
 |---|---|
 | Open popup at the text cursor | `⇧⌘V` *(customisable in Settings)* |
-| Paste the latest clip | `⌘V` *(customisable in Settings)* |
+| Paste — clipboard untouched; newest clip only if the clipboard is empty | `⌘V` *(customisable in Settings)* |
 | Paste clips one by one (oldest first, one per press) | `⌃⌘V` *(customisable in Settings)* |
 | Paste everything in one go | `⌃⌥⌘V` *(customisable in Settings)* |
 | Navigate | `↑` / `↓` |
 | Paste selected | `↵` |
 | Search | Just type — no field to click |
-| Delete an item | Click the `trash` icon on the row |
+| Delete an item | Click the `trash` icon on the row — an undo bar appears under the list |
+| Undo the last delete or clear | `⌘Z` in the popup, or menu bar → **Undo Delete** |
+| Clear all data (asks first) | `⌃⌥⌘K` *(customisable in Settings)* |
 | Hide images | `photo` toggle in the popup header |
 | Close | `Esc` or click outside |
 | Settings | Menu bar icon → **Settings…** |
@@ -133,10 +135,11 @@ Search accepts CJK input: keystrokes reach the system input method through an
 `NSTextInputClient` bridge, so pinyin/Japanese/Korean composition works even
 though the popup never takes focus from the app you're pasting into.
 
-The menu bar icon has two switches, and they apply at different times: the app's own
-*Show in Menu Bar* setting takes effect immediately, while the identically named switch in
-**System Settings → Menu Bar** is applied by macOS at the next launch (it records ad-hoc-signed
-items by binary path, so its state can go stale after a rebuild).
+The app owns the menu bar icon: turning off **Show in Menu Bar** hides it immediately, and the app
+re-applies that choice on every launch. To bring a hidden icon back, press the popup shortcut and
+click **Show again** in the popup.
+
+Pasting a clip leaves the popup open so several clips can be picked in a row; paste-all closes it.
 
 The app follows your system language (English / Simplified Chinese).
 
@@ -165,7 +168,8 @@ Sources/ClipHistory/
 ├── PopupPlacement.swift        # Pure geometry: pick above/below/left/right of the caret
 ├── Localization.swift          # en / zh-Hans string table driven by system language
 ├── UpdateChecker.swift         # GitHub releases check
-└── MenuBarIcon.swift           # Programmatic SF Symbol menu bar icon
+├── ConfirmationCard.swift     # In-panel confirm dialog
+└── MenuBarIcon.swift           # Hand-drawn menu bar template icon
 ```
 
 <details>
@@ -181,7 +185,7 @@ Keyboard events are intercepted at the OS session level while the popup is visib
 Modern Swift observation macros throughout — no `@StateObject` or `@ObservedObject`.
 
 **AES-256-GCM encrypted storage**  
-History is saved as `history.json.enc` — a single AES-GCM sealed box. A 256-bit key is generated on first launch and stored in the Keychain with `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`. Saves are debounced (1 s) so clipboard bursts produce a single write.
+History is saved as `history.json.enc` — a single AES-GCM sealed box. A 256-bit key is generated on first launch and kept in `~/Library/Application Support/ClipHistory/encryption.key` (mode `0600`); the Keychain is only consulted once, to migrate a key written by an older version. Saves are debounced (1 s) so clipboard bursts produce a single write.
 
 **Sensitive data protection**  
 Before recording any clipboard event, the store checks for `org.nspasteboard.ConcealedType` — the standard pasteboard type that 1Password and other credential managers set. Items carrying it are silently dropped.

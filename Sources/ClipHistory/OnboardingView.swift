@@ -95,7 +95,7 @@ struct OnboardingView: View {
     private var launchAtLoginCard: some View {
         SetupCard(icon: "power.circle.fill",
                   iconColor: .accentColor,
-                  title: L10n.s("Auto Launch", "开机启动"),
+                  title: L10n.s("Launch at Login", "登录时启动"),
                   subtitle: L10n.s("Start ClipHistory automatically when you log in.",
                              "登录后自动启动 ClipHistory。")) {
             Toggle("", isOn: $settings.launchAtLogin)
@@ -126,8 +126,8 @@ struct OnboardingView: View {
             Text(axGranted
                  ? L10n.s("You're all set! Enjoy your new clipboard power.",
                           "全部就绪，开始使用吧。")
-                 : L10n.s("You can finish now and grant access later in Settings.",
-                          "也可以先完成后在设置里再授权。"))
+                 : L10n.s("You can finish now and grant access later in System Settings → Privacy & Security → Accessibility.",
+                          "也可以先完成后，到「系统设置 → 隐私与安全性 → 辅助功能」再授权。"))
                 .font(.system(size: 12, weight: .medium, design: .rounded))
                 .foregroundStyle(.secondary.opacity(0.6))
                 .fixedSize(horizontal: false, vertical: true)

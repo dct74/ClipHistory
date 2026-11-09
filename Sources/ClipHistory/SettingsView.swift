@@ -38,12 +38,12 @@ struct SettingsView: View {
             AppTheme.surface(colorScheme)
                 .ignoresSafeArea()
         }
-        .alert(L10n.s("Clear clipboard history?", "清空剪贴板历史？"), isPresented: $showClearAlert) {
+        .alert(L10n.s("Clear Clipboard History?", "清空剪贴板历史？"), isPresented: $showClearAlert) {
             Button(L10n.s("Clear All", "全部清空"), role: .destructive) { store.clearAll() }
             Button(L10n.s("Cancel", "取消"), role: .cancel) {}
         } message: {
-            Text(L10n.s("This will permanently delete all \(store.items.count) stored items.",
-                        "将永久删除已保存的 \(store.items.count) 条记录。"))
+            Text(L10n.s("Deletes all \(store.items.count) stored items. Undo with ⌘Z in the popup.",
+                        "将删除已保存的全部 \(store.items.count) 条记录，可在面板里按 ⌘Z 撤销。"))
         }
     }
 
@@ -166,8 +166,8 @@ struct SettingsView: View {
                 SettingsRow(icon: "arrow.down.doc.fill",
                             iconColor: .purple,
                             label: L10n.s("Paste Latest", "粘贴最近一条"),
-                            hint: L10n.s("Pastes the newest clip in your history.",
-                                         "粘贴历史里最新的一条。")) {
+                            hint: L10n.s("A plain paste — the clipboard is not rewritten; if it is empty, the newest clip is used.",
+                                         "普通粘贴，不改写剪贴板；剪贴板为空时使用最新一条。")) {
                     HotkeyRecorder(hotkey: $settings.pasteLatestHotkey) { candidate in
                         shortcutIsFree(candidate, current: settings.pasteLatestHotkey)
                     }
@@ -259,8 +259,8 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(L10n.s("Clear All Data", "清空全部数据"))
                             .font(.system(size: 14, weight: .bold, design: .rounded))
-                        Text(L10n.s("This removes all clips permanently.",
-                                    "将永久删除所有记录。"))
+                        Text(L10n.s("Removes every clip — undo with ⌘Z in the popup.",
+                                    "删除全部记录——可在面板里按 ⌘Z 撤销。"))
                             .font(.system(size: 11.5, weight: .medium, design: .rounded))
                             .foregroundStyle(.secondary.opacity(0.6))
                     }
@@ -274,7 +274,7 @@ struct SettingsView: View {
                     .help(L10n.s("Global shortcut for Clear All Data — asks for confirmation.",
                                  "清空全部数据的全局快捷键——按下后会先弹出确认框。"))
 
-                    Button(L10n.s("Clear", "清空")) {
+                    Button(L10n.s("Clear All…", "全部清空…")) {
                         showClearAlert = true
                     }
                     .buttonStyle(.bordered)

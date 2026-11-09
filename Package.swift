@@ -8,6 +8,11 @@ let package = Package(
         .executableTarget(
             name: "ClipHistory",
             path: "Sources/ClipHistory"
-        )
+        ),
+        .testTarget(
+            name: "ClipHistoryTests",
+            dependencies: ["ClipHistory"],
+            path: "Tests/ClipHistoryTests"
+        ),
     ]
 )

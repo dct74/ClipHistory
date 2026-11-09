@@ -52,8 +52,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private var clipboardTimer:      Timer?
     private var lastFrontmostSource: SourceApp?   // updated on every app-switch
     private var lastPasteboardChangeCount = NSPasteboard.general.changeCount
-    private var visibilityObservation: NSKeyValueObservation?
-    private var suppressVisibilitySync = false
 
     private static let popupHotkeyID:     UInt32 = 1
     private static let pasteLatestHotkeyID: UInt32 = 2
@@ -75,6 +73,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         settings.onHotkeysChanged  = { [weak self] in self?.reRegisterHotkeys() }
         settings.onMaxItemsChanged = { [weak self] n  in self?.store.updateMaxCount(n) }
         store.onItemCaptured       = { [weak self] in self?.popup.resetPasteCycle() }
+
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(showSettingsFromSecondLaunch),
+            name: ClipHistoryApp.openSettingsNotification,
+            object: nil)
 
         setupMenuBar()
         startFrontmostAppTracking()
@@ -106,15 +110,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         // be ignored and we would lose the only handle.
         settings.onShowMenuBarIconChanged = { [weak self] visible in
             DispatchQueue.main.async { self?.applyIconVisibility(visible) }
-        }
-
-        visibilityObservation = statusItem?.observe(\.isVisible, options: [.new]) { [weak self] item, _ in
-            DispatchQueue.main.async {
-                guard let self, !self.suppressVisibilitySync else { return }
-                if self.settings.showMenuBarIcon != item.isVisible {
-                    self.settings.showMenuBarIcon = item.isVisible
-                }
-            }
         }
 
         // `isVisible` is ignored while the item is still being placed in the bar,
@@ -162,30 +157,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         statusItem = item
     }
 
-    /// Applies the app's own preference, ignoring the KVO echo it produces.
+    /// Applies the user's preference to the status item.
     private func applyIconVisibility(_ visible: Bool, force: Bool = false) {
         guard let item = statusItem else { return }
         guard force || item.isVisible != visible else { return }
-        suppressVisibilitySync = true
         item.isVisible = visible
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            self?.suppressVisibilitySync = false
-        }
     }
 
 
 
 
-    /// Keeps the Settings toggle in step with the system's Menu Bar settings and
-    /// carries the app's own re-add action back into the status item.
-
-    /// Applies a visibility request and ignores the KVO echo it produces, so the
-    /// stored preference can't be overwritten by the value we just set.
-
     /// Refresh the hint line right before the menu opens (hotkey might have changed)
     func menuWillOpen(_ menu: NSMenu) {
         hotkeyHintItem?.title = hintTitle
         undoMenuItem?.isEnabled = store.canUndo
+    }
+
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(undoDeletion) { return store.canUndo }
+        return true
     }
 
     @objc private func undoDeletion() {
@@ -217,7 +207,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         win.title                = L10n.s("ClipHistory Settings", "ClipHistory 设置")
         win.styleMask            = NSWindow.StyleMask([.titled, .closable])
         win.isReleasedWhenClosed = false
-        win.delegate = self          // released in windowWillClose
+        win.delegate = self          // cleared in windowWillClose
         win.center()
         settingsWindow = win
 
@@ -227,8 +217,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     @objc private func quit() { NSApp.terminate(nil) }
 
-    /// Double-clicking the app (or its Dock tile) opens Settings — the only
-    /// window there is.
+    /// A second launch asked the running instance to show itself.
+    @objc private func showSettingsFromSecondLaunch() {
+        DispatchQueue.main.async { [weak self] in
+            NSRunningApplication.current.activate()
+            self?.openSettings()
+        }
+    }
+
+    /// Reopening the app (Finder, `open`) shows Settings — the only window there is.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag { openSettings() }
         return true

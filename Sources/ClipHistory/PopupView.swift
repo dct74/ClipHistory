@@ -21,6 +21,7 @@ struct PopupView: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @State private var searchFocused = true
+    @State private var suppressQueryReset = false
     @State private var lastHoverPt: CGPoint? = nil
     @State private var hoverEnabled         = false
     @State private var justOpened           = true
@@ -67,12 +68,18 @@ struct PopupView: View {
                 .strokeBorder(Color(nsColor: .separatorColor).opacity(0.45), lineWidth: 0.5)
         }
         .overlay {
-            if let confirmation = state.confirmation {
-                confirmationCard(confirmation)
+            if state.confirmation != nil {
+                confirmationCard
             }
         }
-        .onChange(of: state.queryText) { _, _ in state.selectedIndex = 0 }
+        .onChange(of: state.queryText) { _, _ in
+            // Opening the panel clears the query; that must not undo a restored
+            // selection ("Remember Position").
+            if !suppressQueryReset { state.selectedIndex = 0 }
+        }
         .onChange(of: state.showToken) { _, _ in
+            suppressQueryReset = true
+            DispatchQueue.main.async { suppressQueryReset = false }
             searchFocused = true      // typing works immediately — no field to click
             justOpened    = true
             resetHoverState()
@@ -87,7 +94,7 @@ struct PopupView: View {
 
     // MARK: - Confirmation card
 
-    private func confirmationCard(_ confirmation: PopupConfirmation) -> some View {
+    private var confirmationCard: some View {
         ConfirmationCard(
             title: L10n.s("Clear Clipboard History?", "清空剪贴板历史？"),
             message: L10n.s("Removes all \(store.items.count) stored items.\nPress ⌘Z afterwards to undo.",
@@ -155,6 +162,20 @@ struct PopupView: View {
                 Spacer()
 
                 HStack(spacing: 8) {
+                    Button { settings.hideImages.toggle() } label: {
+                        Image(systemName: settings.hideImages ? "photo.slash" : "photo")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(settings.hideImages ? Color.accentColor : Color.primary.opacity(0.4))
+                            .frame(width: 28, height: 28)
+                            .background(
+                                Circle().fill(settings.hideImages ? Color.accentColor.opacity(0.1)
+                                                                  : Color.primary.opacity(0.03))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help(settings.hideImages ? L10n.s("Show images", "显示图片")
+                                              : L10n.s("Hide images", "隐藏图片"))
+
                     Button { state.confirmation = .clearAll } label: {
                         Image(systemName: "trash")
                             .font(.system(size: 11, weight: .bold))
@@ -163,7 +184,7 @@ struct PopupView: View {
                             .background(Circle().fill(Color.red.opacity(0.03)))
                     }
                     .buttonStyle(.plain)
-                    .help(L10n.s("Clear History", "清空历史"))
+                    .help(L10n.s("Clear All Data", "清空全部数据"))
 
                 }
             }
@@ -252,7 +273,7 @@ struct PopupView: View {
 
             ZStack(alignment: .leading) {
                 if state.queryText.isEmpty {
-                    Text(L10n.s("Search history...", "搜索历史…"))
+                    Text(L10n.s("Search history…", "搜索历史…"))
                         .font(.system(size: 14, weight: .medium, design: .rounded))
                         .foregroundStyle(.primary.opacity(0.25))
                 }
@@ -348,7 +369,7 @@ struct PopupView: View {
                     .foregroundStyle(.primary.opacity(0.82))
                 Text(store.items.isEmpty ? L10n.s("Your recent clips will appear here.",
                                                  "复制过的内容会出现在这里。")
-                                         : L10n.s("Try a different search or show images.",
+                                         : L10n.s("Try a different search, or show images.",
                                                  "换个关键词，或显示图片。"))
                     .font(.system(size: 11.5))
                     .foregroundStyle(.tertiary)

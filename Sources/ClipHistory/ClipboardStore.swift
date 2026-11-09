@@ -12,13 +12,18 @@ struct SourceApp: Codable, Equatable {
 
     var icon: NSImage? { SourceApp.cachedIcon(for: bundleID) }
 
-    private static let cache = NSCache<NSString, NSImage>()
+    private static let cache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 64
+        cache.totalCostLimit = 4 * 1024 * 1024
+        return cache
+    }()
 
     private static func cachedIcon(for bundleID: String) -> NSImage? {
         if let hit = cache.object(forKey: bundleID as NSString) { return hit }
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return nil }
         let img = NSWorkspace.shared.icon(forFile: url.path)
-        cache.setObject(img, forKey: bundleID as NSString)
+        cache.setObject(img, forKey: bundleID as NSString, cost: 32 * 32 * 4)
         return img
     }
 }
@@ -134,9 +139,6 @@ final class ClipboardStore {
     private(set) var items: [ClipItem] = []
     private var maxCount: Int
 
-    /// Pasteboard generation of the clip we captured last.
-    private(set) var lastCapturedChangeCount = -1
-
     /// Pasteboard generation of our own last write. Capture is skipped when the
     /// pasteboard still holds it — exact, with no timing window, unlike the old
     /// "suppress the next poll" flag.
@@ -232,8 +234,8 @@ final class ClipboardStore {
             options: [.urlReadingFileURLsOnly: true]
         ) as? [URL], !urls.isEmpty {
             for url in urls where imageExts.contains(url.pathExtension.lowercased()) {
-                if let img = NSImage(contentsOf: url), let thumb = img.pngThumbnail() {
-                    add(ClipItem(content: .image(thumb), sourceApp: source), changeCount: changeCount)
+                if let thumb = ImageThumbnail.png(fromFile: url) {
+                    add(ClipItem(content: .image(thumb), sourceApp: source))
                     return
                 }
             }
@@ -246,12 +248,22 @@ final class ClipboardStore {
         // text means cell content stays editable when pasted into a text editor.
         let pasteboardHasText = pb.string(forType: .string)
             .map { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? false
-        if !pasteboardHasText,
-           let imgs = pb.readObjects(forClasses: [NSImage.self], options: nil) as? [NSImage],
-           let img  = imgs.first(where: { $0.isValid }),
-           let thumb = img.pngThumbnail() {
-            add(ClipItem(content: .image(thumb), sourceApp: source), changeCount: changeCount)
-            return
+        if !pasteboardHasText {
+            // Downsample straight from the encoded bytes — inflating the full
+            // image first costs tens of MB on a 4K capture and stalls the poll.
+            if let data = pb.data(forType: .tiff) ?? pb.data(forType: .png),
+               let thumb = ImageThumbnail.png(from: data) {
+                add(ClipItem(content: .image(thumb), sourceApp: source))
+                return
+            }
+            // Sources that only offer an NSImage still work, one copy at a time.
+            if let imgs = pb.readObjects(forClasses: [NSImage.self], options: nil) as? [NSImage],
+               let img = imgs.first(where: { $0.isValid }),
+               let tiff = img.tiffRepresentation,
+               let thumb = ImageThumbnail.png(from: tiff) {
+                add(ClipItem(content: .image(thumb), sourceApp: source))
+                return
+            }
         }
 
         // ── 3. Text ───────────────────────────────────────────────────────────
@@ -259,7 +271,13 @@ final class ClipboardStore {
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               text != items.first?.textContent
         else { return }
-        add(ClipItem(content: .text(text), sourceApp: source), changeCount: changeCount)
+        // Very large text (logs, minified JSON) would dominate the history and
+        // every save; 256 KB is far above anything a person copies on purpose.
+        guard text.utf8.count <= Self.maxTextBytes else {
+            NSLog("ClipHistory: skipped a %.1f KB text clip", Double(text.utf8.count) / 1024)
+            return
+        }
+        add(ClipItem(content: .text(text), sourceApp: source))
     }
 
     func clearAll() {
@@ -278,7 +296,10 @@ final class ClipboardStore {
         case .removed(let index, let item):
             items.insert(item, at: min(max(index, 0), items.count))
         case .cleared(let previous):
-            items = previous
+            // Merge instead of replacing: anything copied after the clear must
+            // survive the undo (both arrays are newest-first).
+            let kept = Set(items.map(\.id))
+            items = items + previous.filter { !kept.contains($0.id) }
         }
         imageCache.removeAllObjects()
         canUndo = !undoStack.isEmpty
@@ -288,10 +309,37 @@ final class ClipboardStore {
     }
 
     private func pushUndo(_ action: Deletion) {
+        // Only the most recent clear is worth keeping: an older snapshot is a
+        // whole history (images included) and would never be reached first.
+        undoStack.removeAll { if case .cleared = $0 { return true } else { return false } }
         undoStack.append(action)
-        if undoStack.count > Self.undoLimit { undoStack.removeFirst() }
+        while undoStack.count > Self.undoLimit || undoBytes > Self.undoByteLimit {
+            guard undoStack.count > 1 else { break }
+            undoStack.removeFirst()
+        }
         canUndo = true
     }
+
+    private var undoBytes: Int {
+        undoStack.reduce(0) { total, action in
+            switch action {
+            case .removed(_, let item):
+                return total + ClipboardStore.byteCost(of: item)
+            case .cleared(let items):
+                return total + items.reduce(0) { $0 + ClipboardStore.byteCost(of: $1) }
+            }
+        }
+    }
+
+    private static func byteCost(of item: ClipItem) -> Int {
+        switch item.content {
+        case .text(let text): return text.utf8.count
+        case .image(let data): return data.count
+        }
+    }
+
+    private static let undoByteLimit = 8 * 1024 * 1024
+    private static let maxTextBytes = 256 * 1024
 
     func updateMaxCount(_ n: Int) {
         maxCount = n
@@ -326,8 +374,7 @@ final class ClipboardStore {
 
     // MARK: - Private helpers
 
-    private func add(_ item: ClipItem, changeCount: Int) {
-        lastCapturedChangeCount = changeCount
+    private func add(_ item: ClipItem) {
         items.insert(item, at: 0)
         trimToLimit()
         scheduleSave()
@@ -379,11 +426,51 @@ final class ClipboardStore {
         }
     }
 
+    /// Envelope: `0x02 || nonce(12) || ciphertext || tag(16)`.
+    ///
+    /// Written in chunks to a temporary file and then swapped in, so the history
+    /// is never half-written and the process never holds a second full copy of
+    /// the ciphertext (`SealedBox.combined` used to allocate exactly that).
+    private static let envelopeVersion: UInt8 = 0x02
+
     @discardableResult
     private static func write(_ plain: Data, key: SymmetricKey, to url: URL) -> Bool {
-        guard let sealed = try? AES.GCM.seal(plain, using: key),
-              let combined = sealed.combined else { return false }
-        return (try? combined.write(to: url, options: .atomic)) != nil
+        guard let sealed = try? AES.GCM.seal(plain, using: key) else { return false }
+
+        let temp = url.appendingPathExtension("tmp")
+        try? FileManager.default.removeItem(at: temp)
+        guard FileManager.default.createFile(atPath: temp.path, contents: nil) else { return false }
+
+        do {
+            let handle = try FileHandle(forWritingTo: temp)
+            try handle.write(contentsOf: Data([envelopeVersion]))
+            try handle.write(contentsOf: sealed.nonce.withUnsafeBytes { Data($0) })
+            try handle.write(contentsOf: sealed.ciphertext)
+            try handle.write(contentsOf: sealed.tag)
+            try handle.synchronize()
+            try handle.close()
+            _ = try FileManager.default.replaceItemAt(url, withItemAt: temp)
+            return true
+        } catch {
+            try? FileManager.default.removeItem(at: temp)
+            return false
+        }
+    }
+
+    /// Reads either the current envelope or the older `combined` layout.
+    private static func decrypt(_ data: Data, key: SymmetricKey) -> Data? {
+        if data.first == envelopeVersion, data.count > 1 + 12 + 16 {
+            let body = data.dropFirst()
+            let nonce = body.prefix(12)
+            let tag = body.suffix(16)
+            let ciphertext = body.dropFirst(12).dropLast(16)
+            guard let box = try? AES.GCM.SealedBox(nonce: AES.GCM.Nonce(data: nonce),
+                                                  ciphertext: ciphertext,
+                                                  tag: tag) else { return nil }
+            return try? AES.GCM.open(box, using: key)
+        }
+        guard let box = try? AES.GCM.SealedBox(combined: data) else { return nil }
+        return try? AES.GCM.open(box, using: key)
     }
 
     private static let saveQueue = DispatchQueue(label: "com.weiyuankong.cliphistory.save",
@@ -393,8 +480,7 @@ final class ClipboardStore {
 
     private func load() {
         if let enc = try? Data(contentsOf: saveURL) {
-            if let box = try? AES.GCM.SealedBox(combined: enc),
-               let plain = try? AES.GCM.open(box, using: encryptionKey) {
+            if let plain = Self.decrypt(enc, key: encryptionKey) {
                 items = Array(Self.decodeItems(plain).prefix(maxCount * 2))
             } else {
                 // Wrong key or damaged file: keep it for the user instead of
@@ -530,27 +616,34 @@ final class ClipboardStore {
     }
 }
 
-// MARK: - NSImage thumbnail helper
+// MARK: - Image thumbnailing
 
-private extension NSImage {
-    func pngThumbnail(maxDimension: CGFloat = 480) -> Data? {
-        var pixW = representations.map(\.pixelsWide).max() ?? 0
-        var pixH = representations.map(\.pixelsHigh).max() ?? 0
-        if pixW == 0 { pixW = Int(size.width)  }
-        if pixH == 0 { pixH = Int(size.height) }
-        guard pixW > 0, pixH > 0 else { return nil }
+/// Downscales to ≤ 480 px and re-encodes as PNG **without** decoding the full
+/// image: `CGImageSourceCreateThumbnailAtIndex` decodes only what the thumbnail
+/// needs, so a 4K screenshot no longer costs ~33 MB of transient bitmaps on the
+/// main thread during clipboard polling.
+enum ImageThumbnail {
+    static func png(fromFile url: URL, maxDimension: CGFloat = 480) -> Data? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        return png(from: source, maxDimension: maxDimension)
+    }
 
-        let scale = min(maxDimension / CGFloat(pixW), maxDimension / CGFloat(pixH), 1.0)
-        let newW  = max(1, Int(floor(CGFloat(pixW) * scale)))
-        let newH  = max(1, Int(floor(CGFloat(pixH) * scale)))
+    static func png(from data: Data, maxDimension: CGFloat = 480) -> Data? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        return png(from: source, maxDimension: maxDimension)
+    }
 
-        let thumb = NSImage(size: NSSize(width: newW, height: newH), flipped: false) { [self] rect in
-            self.draw(in: rect)
-            return true
+    private static func png(from source: CGImageSource, maxDimension: CGFloat) -> Data? {
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxDimension,
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            return nil
         }
-
-        guard let tiff   = thumb.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiff) else { return nil }
+        let bitmap = NSBitmapImageRep(cgImage: image)
         return bitmap.representation(using: .png, properties: [.compressionFactor: 0.85])
     }
 }

@@ -16,7 +16,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
+        run: sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
 
       - name: Swift version
         run: swift --version
@@ -26,3 +26,8 @@ jobs:
 
       - name: Build (release)
         run: swift build -c release
+
+      # swift-testing ships with the Xcode 16 toolchain, which is why the tests
+      # need it (the geometry, version-comparison and hotkey-default suites).
+      - name: Test
+        run: swift test
